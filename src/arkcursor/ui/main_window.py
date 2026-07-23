@@ -10,14 +10,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -61,15 +61,18 @@ class MainWindow(QMainWindow):
         title = QLabel("鼠标指针样式")
         title.setObjectName("title")
         description = QLabel(
-            "选择 Windows 已安装的指针方案。应用前会自动备份当前设置。"
+            "选择 Windows 已安装或 ArkCursor 内置的指针方案。"
+            "应用前会自动备份当前设置。"
         )
         description.setWordWrap(True)
         self.current_theme_label = QLabel()
         self.current_theme_label.setObjectName("currentTheme")
 
-        self.theme_list = QListWidget()
+        self.theme_list = QTreeWidget()
+        self.theme_list.setHeaderHidden(True)
+        self.theme_list.setIndentation(18)
         self.theme_list.setAlternatingRowColors(True)
-        self.theme_list.currentRowChanged.connect(self._show_theme_details)
+        self.theme_list.currentItemChanged.connect(self._show_theme_details)
 
         self.details = QTableWidget(0, 3)
         self.details.setHorizontalHeaderLabels(["用途", "事件指针预览", "指针文件"])
@@ -126,12 +129,12 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
             QLabel#status { color: #4b5563; }
-            QListWidget, QTableWidget {
+            QTreeWidget, QTableWidget {
                 background: white;
                 border: 1px solid #d8dce3;
                 border-radius: 7px;
             }
-            QListWidget::item { padding: 9px; }
+            QTreeWidget::item { padding: 7px; }
             QPushButton {
                 padding: 7px 14px;
                 border: 1px solid #c7ccd4;
@@ -166,11 +169,29 @@ class MainWindow(QMainWindow):
             self.themes = []
 
         self.theme_list.clear()
-        for theme in self.themes:
-            display_name = friendly_theme_name(theme.name)
-            item = QListWidgetItem(display_name)
-            item.setToolTip(f"系统方案名称：{theme.name}")
-            self.theme_list.addItem(item)
+        theme_items: dict[int, QTreeWidgetItem] = {}
+        for category, is_custom in (("系统指针", False), ("自制指针", True)):
+            category_themes = [
+                (index, theme)
+                for index, theme in enumerate(self.themes)
+                if theme.is_custom is is_custom
+            ]
+            if not category_themes:
+                continue
+
+            header_item = QTreeWidgetItem(self.theme_list, [category])
+            header_item.setFlags(Qt.ItemIsEnabled)
+            header_font = header_item.font(0)
+            header_font.setBold(True)
+            header_item.setFont(0, header_font)
+            header_item.setExpanded(is_custom)
+
+            for index, theme in category_themes:
+                display_name = friendly_theme_name(theme.name)
+                item = QTreeWidgetItem(header_item, [display_name])
+                item.setData(0, Qt.UserRole, index)
+                item.setToolTip(0, f"方案名称：{theme.name}")
+                theme_items[index] = item
 
         enabled = bool(self.themes)
         self.theme_list.setEnabled(enabled)
@@ -179,7 +200,7 @@ class MainWindow(QMainWindow):
         if enabled:
             selected = self.cursor_service.load_selected_theme()
             selected_name = selected.name.casefold() if selected else ""
-            row = next(
+            theme_index = next(
                 (
                     index
                     for index, theme in enumerate(self.themes)
@@ -187,18 +208,24 @@ class MainWindow(QMainWindow):
                 ),
                 0,
             )
-            self.theme_list.setCurrentRow(row)
+            self.theme_list.setCurrentItem(theme_items[theme_index])
             self.status_label.setText(f"已找到 {len(self.themes)} 个可用方案")
         else:
             self.details.setRowCount(0)
             self.status_label.setText("未找到可用的 Windows 指针方案")
 
-    def _show_theme_details(self, row: int) -> None:
-        if row < 0 or row >= len(self.themes):
+    def _show_theme_details(
+        self,
+        current: QTreeWidgetItem | None,
+        previous: QTreeWidgetItem | None = None,
+    ) -> None:
+        del previous
+        theme_index = current.data(0, Qt.UserRole) if current else None
+        if not isinstance(theme_index, int) or not 0 <= theme_index < len(self.themes):
             self.details.setRowCount(0)
             return
 
-        theme = self.themes[row]
+        theme = self.themes[theme_index]
         self.details.setRowCount(len(CURSOR_ROLES))
         for index, role in enumerate(CURSOR_ROLES):
             path = theme.cursors[role]
@@ -212,11 +239,12 @@ class MainWindow(QMainWindow):
             self.details.setRowHeight(index, 52)
 
     def _apply_selected_theme(self) -> None:
-        row = self.theme_list.currentRow()
-        if row < 0 or row >= len(self.themes):
+        current = self.theme_list.currentItem()
+        theme_index = current.data(0, Qt.UserRole) if current else None
+        if not isinstance(theme_index, int) or not 0 <= theme_index < len(self.themes):
             return
 
-        theme = self.themes[row]
+        theme = self.themes[theme_index]
         self.apply_button.setEnabled(False)
         try:
             self.cursor_service.apply_theme(theme)

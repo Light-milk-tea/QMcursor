@@ -16,6 +16,7 @@ USER_SCHEMES_KEY = rf"{ACTIVE_CURSORS_KEY}\Schemes"
 SYSTEM_SCHEMES_KEY = (
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Control Panel\Cursors\Schemes"
 )
+BUNDLED_THEMES_DIR = Path(__file__).resolve().parents[1] / "themes"
 SPI_SETCURSORS = 0x0057
 MANAGED_VALUE_NAMES = ("", *CURSOR_ROLES, "Scheme Source")
 
@@ -42,7 +43,7 @@ class CursorService:
         return os.path.normpath(os.path.expandvars(value)) if value else ""
 
     def list_themes(self) -> list[CursorTheme]:
-        """Enumerate user and system cursor schemes available on this PC."""
+        """Enumerate Windows schemes and themes bundled with ArkCursor."""
         themes: dict[str, CursorTheme] = {}
         locations = (
             (winreg.HKEY_LOCAL_MACHINE, SYSTEM_SCHEMES_KEY, 2),
@@ -63,11 +64,46 @@ class CursorService:
                 if not theme.missing_files():
                     themes[name.casefold()] = theme
 
+        for theme in self.list_bundled_themes():
+            themes[theme.name.casefold()] = theme
+
         if not themes:
             current = self.current_theme()
             themes[current.name.casefold()] = current
 
         return sorted(themes.values(), key=lambda item: item.name.casefold())
+
+    @staticmethod
+    def list_bundled_themes(
+        themes_dir: Path = BUNDLED_THEMES_DIR,
+    ) -> list[CursorTheme]:
+        """Load valid theme manifests shipped inside the application."""
+        themes: list[CursorTheme] = []
+        if not themes_dir.is_dir():
+            return themes
+
+        for manifest in sorted(themes_dir.glob("*/theme.json")):
+            try:
+                payload = json.loads(manifest.read_text(encoding="utf-8"))
+                cursor_values = payload["cursors"]
+                if not isinstance(cursor_values, dict):
+                    continue
+                cursors = {
+                    str(role): str((manifest.parent / str(path)).resolve())
+                    for role, path in cursor_values.items()
+                    if path
+                }
+                theme = CursorTheme(
+                    name=str(payload["name"]),
+                    cursors=cursors,
+                    source=int(payload.get("source", 1)),
+                    is_custom=True,
+                )
+            except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+                continue
+            if not theme.missing_files():
+                themes.append(theme)
+        return themes
 
     def current_theme(self) -> CursorTheme:
         snapshot = self._read_managed_values()

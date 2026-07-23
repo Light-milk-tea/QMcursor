@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import arkcursor.services.cursor_service as cursor_module
-from arkcursor.models.theme import CursorTheme
+from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
 from arkcursor.services.cursor_service import CursorService, CursorServiceError
 
 
@@ -105,3 +105,18 @@ def test_selected_theme_state_round_trip(tmp_path: Path) -> None:
     assert service.load_selected_theme() == theme
     service.clear_selected_theme()
     assert service.load_selected_theme() is None
+
+
+@pytest.mark.parametrize(
+    "theme_name",
+    ("粉白像素（概念版）", "粉白 Fluent 精致版"),
+)
+def test_bundled_cursor_themes_are_available(theme_name: str) -> None:
+    themes = CursorService.list_bundled_themes()
+
+    theme = next(item for item in themes if item.name == theme_name)
+    assert Path(theme.cursors["Arrow"]).name == "arrow.cur"
+    assert Path(theme.cursors["Wait"]).name == "wait.cur"
+    assert Path(theme.cursors["Hand"]).name == "hand.cur"
+    assert all(theme.cursors[role] for role in CURSOR_ROLES)
+    assert theme.missing_files() == []

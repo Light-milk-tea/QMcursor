@@ -71,6 +71,7 @@ class CursorTheme:
     name: str
     cursors: Mapping[str, str]
     source: int = 2
+    is_custom: bool = False
 
     def __post_init__(self) -> None:
         unknown = set(self.cursors) - set(CURSOR_ROLES)
@@ -92,6 +93,7 @@ class CursorTheme:
         return {
             "name": self.name,
             "source": self.source,
+            "is_custom": self.is_custom,
             "cursors": dict(self.cursors),
         }
 
@@ -105,6 +107,7 @@ class CursorTheme:
             name=str(data.get("name", "未命名主题")),
             source=int(data.get("source", 1)),
             cursors={str(key): str(value) for key, value in cursors.items()},
+            is_custom=bool(data.get("is_custom", False)),
         )
 
     @classmethod
