@@ -5,7 +5,11 @@ import pytest
 
 import arkcursor.services.cursor_service as cursor_module
 from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
-from arkcursor.services.cursor_service import CursorService, CursorServiceError
+from arkcursor.services.cursor_service import (
+    CURSOR_SIZE_VALUE,
+    CursorService,
+    CursorServiceError,
+)
 
 
 class FakeRegistryKey:
@@ -107,9 +111,69 @@ def test_selected_theme_state_round_trip(tmp_path: Path) -> None:
     assert service.load_selected_theme() is None
 
 
+def test_current_cursor_size_reads_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cursor_module.winreg,
+        "OpenKey",
+        lambda *args, **kwargs: FakeRegistryKey(),
+    )
+    monkeypatch.setattr(
+        cursor_module.winreg,
+        "QueryValueEx",
+        lambda key, name: (80, cursor_module.winreg.REG_DWORD),
+    )
+
+    assert CursorService.current_cursor_size() == 80
+
+
+def test_set_cursor_size_writes_registry_and_reloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CursorService(tmp_path)
+    writes: list[tuple[str, int, int]] = []
+    size_updates: list[int] = []
+    monkeypatch.setattr(service, "ensure_initial_backup", lambda: None)
+    monkeypatch.setattr(service, "_read_managed_values", lambda: {})
+    monkeypatch.setattr(
+        cursor_module.winreg,
+        "CreateKeyEx",
+        lambda *args, **kwargs: FakeRegistryKey(),
+    )
+    monkeypatch.setattr(
+        cursor_module.winreg,
+        "SetValueEx",
+        lambda key, name, reserved, value_type, value: writes.append(
+            (name, value_type, value)
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "_set_system_cursor_size",
+        lambda size: size_updates.append(size),
+    )
+
+    service.set_cursor_size(72)
+
+    assert writes == [(CURSOR_SIZE_VALUE, cursor_module.winreg.REG_DWORD, 72)]
+    assert size_updates == [72]
+
+
+def test_set_cursor_size_rejects_unsupported_step(tmp_path: Path) -> None:
+    service = CursorService(tmp_path)
+
+    with pytest.raises(ValueError, match="步长"):
+        service.set_cursor_size(81)
+
+
 @pytest.mark.parametrize(
     "theme_name",
-    ("粉白像素（概念版）", "粉白 Fluent 精致版"),
+    (
+        "粉白 Fluent 精致版",
+        "纸鹤圆润超粗体",
+    ),
 )
 def test_bundled_cursor_themes_are_available(theme_name: str) -> None:
     themes = CursorService.list_bundled_themes()
@@ -120,3 +184,15 @@ def test_bundled_cursor_themes_are_available(theme_name: str) -> None:
     assert Path(theme.cursors["Hand"]).name == "hand.cur"
     assert all(theme.cursors[role] for role in CURSOR_ROLES)
     assert theme.missing_files() == []
+
+
+def test_retired_cursor_themes_are_not_listed() -> None:
+    names = {theme.name for theme in CursorService.list_bundled_themes()}
+
+    assert names.isdisjoint(
+        {
+            "粉白像素（概念版）",
+            "纸鹤与风铃",
+            "纸鹤与风铃（生图试用版）",
+        }
+    )

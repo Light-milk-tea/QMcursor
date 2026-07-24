@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSlider,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -29,7 +30,13 @@ from arkcursor.models.theme import (
     friendly_theme_name,
 )
 from arkcursor.services.autostart_service import AutostartService
-from arkcursor.services.cursor_service import CursorService, CursorServiceError
+from arkcursor.services.cursor_service import (
+    CURSOR_SIZE_MAX,
+    CURSOR_SIZE_MIN,
+    CURSOR_SIZE_STEP,
+    CursorService,
+    CursorServiceError,
+)
 from arkcursor.ui.cursor_preview import CursorPreview
 
 
@@ -50,6 +57,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(720, 460)
         self._build_ui()
         self._refresh_current_theme()
+        self._refresh_cursor_size()
         self._load_themes()
 
     def _build_ui(self) -> None:
@@ -93,6 +101,30 @@ class MainWindow(QMainWindow):
         self.autostart_checkbox.setChecked(self.autostart_service.is_enabled())
         self.autostart_checkbox.toggled.connect(self._toggle_autostart)
 
+        self.size_slider = QSlider(Qt.Horizontal)
+        size_level_count = (
+            (CURSOR_SIZE_MAX - CURSOR_SIZE_MIN) // CURSOR_SIZE_STEP + 1
+        )
+        self.size_slider.setRange(1, size_level_count)
+        self.size_slider.setSingleStep(1)
+        self.size_slider.setPageStep(1)
+        self.size_slider.setTickInterval(1)
+        self.size_slider.setTickPosition(QSlider.TicksBelow)
+        self.size_slider.valueChanged.connect(self._update_size_label)
+
+        self.size_value_label = QLabel()
+        self.size_value_label.setMinimumWidth(72)
+        self.size_value_label.setAlignment(Qt.AlignCenter)
+
+        self.apply_size_button = QPushButton("应用大小")
+        self.apply_size_button.clicked.connect(self._apply_cursor_size)
+
+        size_controls = QHBoxLayout()
+        size_controls.addWidget(QLabel("指针大小"))
+        size_controls.addWidget(self.size_slider, 1)
+        size_controls.addWidget(self.size_value_label)
+        size_controls.addWidget(self.apply_size_button)
+
         self.status_label = QLabel("正在读取系统指针方案……")
         self.status_label.setObjectName("status")
 
@@ -112,6 +144,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(description)
         root_layout.addWidget(self.current_theme_label)
         root_layout.addWidget(splitter, 1)
+        root_layout.addLayout(size_controls)
         root_layout.addWidget(self.autostart_checkbox)
         root_layout.addLayout(actions)
         self.setCentralWidget(root)
@@ -160,6 +193,26 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             self.current_theme_label.setText("目前指针样式：读取失败")
             self.current_theme_label.setToolTip(str(exc))
+
+    def _refresh_cursor_size(self) -> None:
+        try:
+            size = self.cursor_service.current_cursor_size()
+        except OSError as exc:
+            self.size_slider.setEnabled(False)
+            self.apply_size_button.setEnabled(False)
+            self.size_value_label.setText("读取失败")
+            self.size_value_label.setToolTip(str(exc))
+            return
+        level = round((size - CURSOR_SIZE_MIN) / CURSOR_SIZE_STEP) + 1
+        self.size_slider.setValue(level)
+        self._update_size_label(level)
+
+    def _update_size_label(self, level: int) -> None:
+        size = CURSOR_SIZE_MIN + (level - 1) * CURSOR_SIZE_STEP
+        self.size_value_label.setText(f"{size} px")
+        self.size_value_label.setToolTip(
+            f"大小等级 {level} / {self.size_slider.maximum()}"
+        )
 
     def _load_themes(self) -> None:
         try:
@@ -258,6 +311,22 @@ class MainWindow(QMainWindow):
             self._refresh_current_theme()
         finally:
             self.apply_button.setEnabled(True)
+
+    def _apply_cursor_size(self) -> None:
+        size = CURSOR_SIZE_MIN + (
+            self.size_slider.value() - 1
+        ) * CURSOR_SIZE_STEP
+        self.apply_size_button.setEnabled(False)
+        try:
+            self.cursor_service.set_cursor_size(size)
+        except (CursorServiceError, ValueError) as exc:
+            self._show_error("调整大小失败", str(exc))
+            self.status_label.setText("调整指针大小失败")
+            self._refresh_cursor_size()
+        else:
+            self.status_label.setText(f"指针大小已调整为 {size} px")
+        finally:
+            self.apply_size_button.setEnabled(True)
 
     def _restore_backup(self) -> None:
         answer = QMessageBox.question(

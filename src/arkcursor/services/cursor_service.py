@@ -18,7 +18,13 @@ SYSTEM_SCHEMES_KEY = (
 )
 BUNDLED_THEMES_DIR = Path(__file__).resolve().parents[1] / "themes"
 SPI_SETCURSORS = 0x0057
-MANAGED_VALUE_NAMES = ("", *CURSOR_ROLES, "Scheme Source")
+SPI_SETCURSORBASESIZE = 0x2029
+SPIF_UPDATEINIFILE = 0x01
+CURSOR_SIZE_VALUE = "CursorBaseSize"
+CURSOR_SIZE_MIN = 32
+CURSOR_SIZE_MAX = 256
+CURSOR_SIZE_STEP = 8
+MANAGED_VALUE_NAMES = ("", *CURSOR_ROLES, "Scheme Source", CURSOR_SIZE_VALUE)
 
 
 class CursorServiceError(RuntimeError):
@@ -156,13 +162,66 @@ class CursorService:
         if remember:
             self.save_selected_theme(theme)
 
+    @staticmethod
+    def current_cursor_size() -> int:
+        """Return the current Windows cursor base size in pixels."""
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                ACTIVE_CURSORS_KEY,
+                0,
+                winreg.KEY_QUERY_VALUE,
+            ) as key:
+                value, _value_type = winreg.QueryValueEx(key, CURSOR_SIZE_VALUE)
+            size = int(value)
+        except (FileNotFoundError, TypeError, ValueError):
+            size = CURSOR_SIZE_MIN
+        return max(CURSOR_SIZE_MIN, min(CURSOR_SIZE_MAX, size))
+
+    def set_cursor_size(self, size: int) -> None:
+        """Set the Windows cursor base size and reload active cursors."""
+        if not CURSOR_SIZE_MIN <= size <= CURSOR_SIZE_MAX:
+            raise ValueError(
+                f"指针大小必须在 {CURSOR_SIZE_MIN} 到 {CURSOR_SIZE_MAX} 像素之间。"
+            )
+        if (size - CURSOR_SIZE_MIN) % CURSOR_SIZE_STEP:
+            raise ValueError(f"指针大小必须以 {CURSOR_SIZE_STEP} 像素为步长。")
+
+        self.ensure_initial_backup()
+        before = self._read_managed_values()
+        previous_size = int(
+            before.get(CURSOR_SIZE_VALUE, {}).get("value") or CURSOR_SIZE_MIN
+        )
+        try:
+            with winreg.CreateKeyEx(
+                winreg.HKEY_CURRENT_USER,
+                ACTIVE_CURSORS_KEY,
+                0,
+                winreg.KEY_SET_VALUE,
+            ) as key:
+                winreg.SetValueEx(
+                    key,
+                    CURSOR_SIZE_VALUE,
+                    0,
+                    winreg.REG_DWORD,
+                    size,
+                )
+            self._set_system_cursor_size(size)
+        except Exception as exc:
+            try:
+                self._restore_managed_values(before)
+                self._set_system_cursor_size(previous_size)
+            except Exception:
+                pass
+            raise CursorServiceError(f"调整鼠标指针大小失败：{exc}") from exc
+
     def ensure_initial_backup(self) -> None:
         if self.backup_path.exists():
             return
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._write_json(
             self.backup_path,
-            {"version": 1, "values": self._read_managed_values()},
+            {"version": 2, "values": self._read_managed_values()},
         )
 
     def restore_initial_backup(self) -> None:
@@ -174,7 +233,13 @@ class CursorService:
             values = payload["values"]
             if not isinstance(values, dict):
                 raise ValueError("备份 values 格式无效")
-            self._restore_managed_values(values)
+            self._restore_managed_values(
+                values,
+                preserve_missing_size=int(payload.get("version", 1)) < 2,
+            )
+            size_item = values.get(CURSOR_SIZE_VALUE)
+            if size_item is not None:
+                self._set_system_cursor_size(int(size_item["value"]))
             self._reload_system_cursors()
             self.clear_selected_theme()
         except CursorServiceError:
@@ -240,7 +305,11 @@ class CursorService:
         return result
 
     @staticmethod
-    def _restore_managed_values(values: dict[str, dict[str, Any]]) -> None:
+    def _restore_managed_values(
+        values: dict[str, dict[str, Any]],
+        *,
+        preserve_missing_size: bool = False,
+    ) -> None:
         with winreg.CreateKeyEx(
             winreg.HKEY_CURRENT_USER,
             ACTIVE_CURSORS_KEY,
@@ -250,6 +319,8 @@ class CursorService:
             for name in MANAGED_VALUE_NAMES:
                 item = values.get(name)
                 if item is None:
+                    if preserve_missing_size and name == CURSOR_SIZE_VALUE:
+                        continue
                     try:
                         winreg.DeleteValue(key, name)
                     except FileNotFoundError:
@@ -276,6 +347,22 @@ class CursorService:
         function.restype = ctypes.c_bool
 
         if not function(SPI_SETCURSORS, 0, None, 0):
+            error = ctypes.get_last_error()
+            raise ctypes.WinError(error)
+
+    @staticmethod
+    def _set_system_cursor_size(size: int) -> None:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        function = user32.SystemParametersInfoW
+        function.argtypes = [
+            ctypes.c_uint,
+            ctypes.c_uint,
+            ctypes.c_uint,
+            ctypes.c_uint,
+        ]
+        function.restype = ctypes.c_bool
+
+        if not function(SPI_SETCURSORBASESIZE, 0, size, SPIF_UPDATEINIFILE):
             error = ctypes.get_last_error()
             raise ctypes.WinError(error)
 

@@ -7,3 +7,10 @@ dist/
 *.egg-info/
 *.spec
 skills/
+/素材/
+/doc/
+!.cursor/
+!.cursor/skills/
+!.cursor/skills/generate-qmcursor-theme/
+!.cursor/skills/generate-qmcursor-theme/**
+.cursor/skills/generate-qmcursor-theme/**/__pycache__/
