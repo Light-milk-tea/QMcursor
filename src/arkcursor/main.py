@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("ArkCursor")
     app.setOrganizationName("ArkCursor")
     window = MainWindow()
+    app.aboutToQuit.connect(window.physics_service.stop)
     window.show()
     return app.exec()
 

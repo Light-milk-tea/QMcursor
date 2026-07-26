@@ -26,5 +26,9 @@ if errorlevel 1 (
     )
 )
 
-start "" ".venv\Scripts\pythonw.exe" "%~dp0run.py"
+if exist ".venv\Scripts\pythonw.exe" (
+    start "" ".venv\Scripts\pythonw.exe" "%~dp0run.py"
+) else (
+    start "" ".venv\Scripts\python.exe" "%~dp0run.py"
+)
 exit /b 0

@@ -37,7 +37,12 @@ from arkcursor.services.cursor_service import (
     CursorService,
     CursorServiceError,
 )
+from arkcursor.services.physics_cursor_service import (
+    PhysicsCursorError,
+    PhysicsCursorService,
+)
 from arkcursor.ui.cursor_preview import CursorPreview
+from arkcursor.ui.physics_overlay import resolve_cursor_image_path
 
 
 class MainWindow(QMainWindow):
@@ -45,12 +50,17 @@ class MainWindow(QMainWindow):
         self,
         cursor_service: CursorService | None = None,
         autostart_service: AutostartService | None = None,
+        physics_service: PhysicsCursorService | None = None,
     ) -> None:
         super().__init__()
         self.cursor_service = cursor_service or CursorService()
         self.autostart_service = autostart_service or AutostartService()
+        self.physics_service = physics_service or PhysicsCursorService(
+            self.cursor_service.data_dir
+        )
         self.themes: list[CursorTheme] = []
         self._updating_autostart = False
+        self._updating_physics = False
 
         self.setWindowTitle("ArkCursor 鼠标指针")
         self.resize(880, 560)
@@ -59,6 +69,7 @@ class MainWindow(QMainWindow):
         self._refresh_current_theme()
         self._refresh_cursor_size()
         self._load_themes()
+        self._restore_physics_preference()
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -100,6 +111,14 @@ class MainWindow(QMainWindow):
         self.autostart_checkbox = QCheckBox("开机时自动重新应用所选样式")
         self.autostart_checkbox.setChecked(self.autostart_service.is_enabled())
         self.autostart_checkbox.toggled.connect(self._toggle_autostart)
+
+        self.physics_checkbox = QCheckBox("启用物理摇摆（实验）")
+        self.physics_checkbox.setToolTip(
+            "用叠加层绘制当前主题指针，随移动软跟随、摇摆，并按用途自动换图"
+            "（文本选择、链接等）。需要自制主题 PNG（如伊雷娜）。"
+            "关闭窗口会停止叠加层，下次启动可自动恢复。"
+        )
+        self.physics_checkbox.toggled.connect(self._toggle_physics)
 
         self.size_slider = QSlider(Qt.Horizontal)
         size_level_count = (
@@ -146,6 +165,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(splitter, 1)
         root_layout.addLayout(size_controls)
         root_layout.addWidget(self.autostart_checkbox)
+        root_layout.addWidget(self.physics_checkbox)
         root_layout.addLayout(actions)
         self.setCentralWidget(root)
 
@@ -304,13 +324,27 @@ class MainWindow(QMainWindow):
         except CursorServiceError as exc:
             self._show_error("应用失败", str(exc))
             self.status_label.setText("应用失败，原设置已尝试恢复")
-        else:
-            self.status_label.setText(
-                f"已应用：{friendly_theme_name(theme.name)}"
-            )
-            self._refresh_current_theme()
-        finally:
             self.apply_button.setEnabled(True)
+            return
+
+        self._refresh_current_theme()
+        if self.physics_service.is_running:
+            try:
+                self.physics_service.sync_theme(
+                    theme, self.cursor_service.current_cursor_size()
+                )
+            except PhysicsCursorError as exc:
+                self._set_physics_checked(False)
+                self.physics_service.save_enabled(False)
+                self._show_error("物理摇摆已关闭", str(exc))
+                self.status_label.setText(
+                    f"已应用：{friendly_theme_name(theme.name)}（物理摇摆已关闭）"
+                )
+                self.apply_button.setEnabled(True)
+                return
+
+        self.status_label.setText(f"已应用：{friendly_theme_name(theme.name)}")
+        self.apply_button.setEnabled(True)
 
     def _apply_cursor_size(self) -> None:
         size = CURSOR_SIZE_MIN + (
@@ -319,7 +353,11 @@ class MainWindow(QMainWindow):
         self.apply_size_button.setEnabled(False)
         try:
             self.cursor_service.set_cursor_size(size)
-        except (CursorServiceError, ValueError) as exc:
+            if self.physics_service.is_running:
+                self.physics_service.sync_size(size)
+        except (CursorServiceError, ValueError, PhysicsCursorError) as exc:
+            if isinstance(exc, PhysicsCursorError):
+                self._set_physics_checked(False)
             self._show_error("调整大小失败", str(exc))
             self.status_label.setText("调整指针大小失败")
             self._refresh_cursor_size()
@@ -339,7 +377,18 @@ class MainWindow(QMainWindow):
 
         try:
             self.cursor_service.restore_initial_backup()
-        except CursorServiceError as exc:
+            if self.physics_service.is_running:
+                theme = self._theme_for_physics()
+                if theme is None:
+                    raise PhysicsCursorError("恢复后无法找到可用于物理摇摆的主题。")
+                self.physics_service.sync_theme(
+                    theme, self.cursor_service.current_cursor_size()
+                )
+        except (CursorServiceError, PhysicsCursorError) as exc:
+            if isinstance(exc, PhysicsCursorError):
+                self._set_physics_checked(False)
+                self.physics_service.stop()
+                self.physics_service.save_enabled(False)
             self._show_error("恢复失败", str(exc))
         else:
             self.status_label.setText("已恢复首次备份")
@@ -358,6 +407,90 @@ class MainWindow(QMainWindow):
         else:
             state = "开启" if enabled else "关闭"
             self.status_label.setText(f"已{state}开机自动应用")
+
+    def _toggle_physics(self, enabled: bool) -> None:
+        if self._updating_physics:
+            return
+        if not enabled:
+            self.physics_service.stop()
+            self.physics_service.save_enabled(False)
+            self.status_label.setText("已关闭物理摇摆")
+            return
+
+        theme = self._theme_for_physics()
+        if theme is None:
+            self._set_physics_checked(False)
+            self._show_error(
+                "无法启用物理摇摆",
+                "请先选择或应用带有 PNG 预览图的自制主题（如伊雷娜）。",
+            )
+            return
+
+        try:
+            self.physics_service.start(
+                theme, self.cursor_service.current_cursor_size()
+            )
+            self.physics_service.save_enabled(True)
+        except PhysicsCursorError as exc:
+            self._set_physics_checked(False)
+            self._show_error("无法启用物理摇摆", str(exc))
+            return
+        self.status_label.setText(
+            f"已启用物理摇摆：{friendly_theme_name(theme.name)}"
+        )
+
+    def _restore_physics_preference(self) -> None:
+        if not self.physics_service.load_enabled():
+            return
+        theme = self._theme_for_physics()
+        if theme is None:
+            self.physics_service.save_enabled(False)
+            return
+        try:
+            self.physics_service.start(
+                theme, self.cursor_service.current_cursor_size()
+            )
+        except PhysicsCursorError:
+            self.physics_service.save_enabled(False)
+            return
+        self._set_physics_checked(True)
+        self.status_label.setText(
+            f"已恢复物理摇摆：{friendly_theme_name(theme.name)}"
+        )
+
+    def _theme_for_physics(self) -> CursorTheme | None:
+        current = self.theme_list.currentItem()
+        theme_index = current.data(0, Qt.UserRole) if current else None
+        if isinstance(theme_index, int) and 0 <= theme_index < len(self.themes):
+            candidate = self.themes[theme_index]
+            if self._theme_has_arrow_png(candidate):
+                return candidate
+
+        selected = self.cursor_service.load_selected_theme()
+        if selected is not None and self._theme_has_arrow_png(selected):
+            return selected
+
+        try:
+            active = self.cursor_service.current_theme()
+        except OSError:
+            return None
+        if self._theme_has_arrow_png(active):
+            return active
+        return None
+
+    @staticmethod
+    def _theme_has_arrow_png(theme: CursorTheme) -> bool:
+        path = resolve_cursor_image_path(theme.cursors.get("Arrow", ""))
+        return path is not None and path.suffix.lower() == ".png"
+
+    def _set_physics_checked(self, checked: bool) -> None:
+        self._updating_physics = True
+        self.physics_checkbox.setChecked(checked)
+        self._updating_physics = False
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self.physics_service.stop()
+        super().closeEvent(event)
 
     def _show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
