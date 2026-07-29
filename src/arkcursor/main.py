@@ -14,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--startup",
         action="store_true",
-        help="静默重新应用上次选择的样式并退出",
+        help="静默重新应用上次选择的样式；若启用了物理摇摆则托盘常驻",
     )
     return parser
 
@@ -32,6 +32,32 @@ def apply_at_startup(service: CursorService | None = None) -> int:
     return 0
 
 
+def _physics_enabled_at_startup() -> bool:
+    from arkcursor.services.physics_cursor_service import PhysicsCursorService
+
+    cursor_service = CursorService()
+    return PhysicsCursorService(cursor_service.data_dir).load_enabled()
+
+
+def run_gui(*, start_hidden: bool = False) -> int:
+    from PySide6.QtWidgets import QApplication
+
+    from arkcursor.ui.main_window import MainWindow
+
+    app = QApplication(sys.argv[:1])
+    app.setApplicationName("ArkCursor")
+    app.setOrganizationName("ArkCursor")
+    # Keep running in tray while physics overlay is active.
+    app.setQuitOnLastWindowClosed(False)
+    window = MainWindow()
+    app.aboutToQuit.connect(window.physics_service.stop)
+    if start_hidden and window.physics_service.is_running:
+        window.retreat_to_tray()
+    else:
+        window.show()
+    return app.exec()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -40,19 +66,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.startup:
-        return apply_at_startup()
+        code = apply_at_startup()
+        if code != 0:
+            return code
+        if _physics_enabled_at_startup():
+            return run_gui(start_hidden=True)
+        return 0
 
-    from PySide6.QtWidgets import QApplication
-
-    from arkcursor.ui.main_window import MainWindow
-
-    app = QApplication(sys.argv[:1])
-    app.setApplicationName("ArkCursor")
-    app.setOrganizationName("ArkCursor")
-    window = MainWindow()
-    app.aboutToQuit.connect(window.physics_service.stop)
-    window.show()
-    return app.exec()
+    return run_gui(start_hidden=False)
 
 
 if __name__ == "__main__":

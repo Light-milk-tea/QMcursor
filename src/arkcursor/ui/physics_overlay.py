@@ -9,7 +9,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRect, Qt, QTimer
-from PySide6.QtGui import QCursor, QGuiApplication, QImage, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QGuiApplication,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import QWidget
 
 user32 = ctypes.windll.user32
@@ -51,6 +60,13 @@ class PhysicsConfig:
     max_angle: float = 0.55
     scale: float = 0.28
     hotspot: tuple[float, float] = (0.12, 0.08)
+    # Flexible hanging cord + charm (Verlet rope).
+    cord_segments: int = 7
+    cord_length_ratio: float = 1.35
+    cord_gravity: float = 0.55
+    cord_damping: float = 0.985
+    cord_iterations: int = 4
+    cord_width: float = 1.7
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,16 +74,112 @@ class RoleSprite:
     pixmap: QPixmap
     hotspot: tuple[float, float]
     scale: float
+    # Cord attach point as fractions of the sprite (from opaque geometry).
+    hang: tuple[float, float] = (0.5, 0.94)
+
+
+@dataclass(frozen=True, slots=True)
+class PendantSprite:
+    """Optional charm drawn at the end of a flexible hanging cord."""
+
+    pixmap: QPixmap
+    pivot: tuple[float, float]
+    height_ratio: float = 0.85
+
+
+class CordState:
+    """Multi-point hanging cord simulated with Verlet integration."""
+
+    def __init__(self, segments: int) -> None:
+        count = max(3, segments + 1)
+        self.x = [0.0] * count
+        self.y = [0.0] * count
+        self.px = [0.0] * count
+        self.py = [0.0] * count
+        self.initialized = False
+
+    def reset(self, anchor_x: float, anchor_y: float, spacing: float) -> None:
+        for i in range(len(self.x)):
+            self.x[i] = anchor_x
+            self.y[i] = anchor_y + i * spacing
+            self.px[i] = self.x[i]
+            self.py[i] = self.y[i]
+        self.initialized = True
+
+    def translate(self, dx: float, dy: float) -> None:
+        """Move the whole cord rigidly (used when hang point retargets)."""
+        if not self.initialized:
+            return
+        for i in range(len(self.x)):
+            self.x[i] += dx
+            self.y[i] += dy
+            self.px[i] += dx
+            self.py[i] += dy
+
+    def pin_and_step(
+        self,
+        anchor_x: float,
+        anchor_y: float,
+        *,
+        spacing: float,
+        gravity: float,
+        damping: float,
+        iterations: int,
+    ) -> None:
+        if not self.initialized:
+            self.reset(anchor_x, anchor_y, spacing)
+            return
+
+        n = len(self.x)
+        self.x[0] = anchor_x
+        self.y[0] = anchor_y
+        self.px[0] = anchor_x
+        self.py[0] = anchor_y
+
+        for i in range(1, n):
+            cx = self.x[i]
+            cy = self.y[i]
+            vx = (cx - self.px[i]) * damping
+            vy = (cy - self.py[i]) * damping
+            self.px[i] = cx
+            self.py[i] = cy
+            self.x[i] = cx + vx
+            self.y[i] = cy + vy + gravity
+
+        for _ in range(max(1, iterations)):
+            self.x[0] = anchor_x
+            self.y[0] = anchor_y
+            for i in range(1, n):
+                dx = self.x[i] - self.x[i - 1]
+                dy = self.y[i] - self.y[i - 1]
+                dist = math.hypot(dx, dy) or 0.0001
+                factor = (spacing - dist) / dist
+                # Anchor is fixed; bias correction onto the free end.
+                if i == 1:
+                    ox = dx * factor
+                    oy = dy * factor
+                    self.x[i] += ox
+                    self.y[i] += oy
+                else:
+                    ox = dx * factor * 0.5
+                    oy = dy * factor * 0.5
+                    self.x[i - 1] -= ox
+                    self.y[i - 1] -= oy
+                    self.x[i] += ox
+                    self.y[i] += oy
+            self.x[0] = anchor_x
+            self.y[0] = anchor_y
 
 
 class PhysicsState:
-    def __init__(self, x: float, y: float) -> None:
+    def __init__(self, x: float, y: float, cord_segments: int = 7) -> None:
         self.x = x
         self.y = y
         self.angle = 0.0
         self.angular_vel = 0.0
         self.prev_mx = x
         self.prev_my = y
+        self.cord = CordState(cord_segments)
 
 
 def set_click_through(hwnd: int) -> None:
@@ -209,6 +321,104 @@ def hotspot_fraction(image: QImage, kind: str) -> tuple[float, float]:
     )
 
 
+def hang_fraction(image: QImage, kind: str) -> tuple[float, float]:
+    """Cord attach point from opaque bounds (fractions of width/height).
+
+    Most roles hang from the bottom-center of the drawn art. Pen-like
+    southwest tips hang from the body center so the charm is not glued to
+    the writing point.
+    """
+    if image.width() <= 0 or image.height() <= 0:
+        return (0.5, 0.94)
+
+    source = image
+    if source.format() != QImage.Format.Format_ARGB32:
+        source = source.convertToFormat(QImage.Format.Format_ARGB32)
+
+    max_edge = max(source.width(), source.height())
+    if max_edge > 64:
+        work = source.scaled(
+            64,
+            64,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation,
+        )
+        if work.format() != QImage.Format.Format_ARGB32:
+            work = work.convertToFormat(QImage.Format.Format_ARGB32)
+    else:
+        work = source
+
+    width = work.width()
+    height = work.height()
+    bytes_per_line = work.bytesPerLine()
+    raw = memoryview(work.constBits()).cast("B")
+
+    min_x = width
+    min_y = height
+    max_x = -1
+    max_y = -1
+    for y in range(height):
+        row = y * bytes_per_line
+        for x in range(width):
+            if raw[row + x * 4 + 3] <= 16:
+                continue
+            if x < min_x:
+                min_x = x
+            if y < min_y:
+                min_y = y
+            if x > max_x:
+                max_x = x
+            if y > max_y:
+                max_y = y
+
+    if max_x < 0:
+        return (0.5, 0.94)
+
+    box_w = max(max_x - min_x, 1)
+    box_h = max(max_y - min_y, 1)
+    if kind == "southwest":
+        hx = min_x + box_w * 0.55
+        hy = min_y + box_h * 0.38
+    elif kind == "northwest":
+        hx = min_x + box_w * 0.58
+        hy = max_y - box_h * 0.10
+    elif kind == "north":
+        hx = min_x + box_w * 0.50
+        hy = max_y - box_h * 0.08
+    else:
+        hx = min_x + box_w * 0.50
+        hy = max_y - box_h * 0.05
+
+    return (
+        hx / max(width - 1, 1),
+        hy / max(height - 1, 1),
+    )
+
+
+def _smooth_cord_path(points: list[QPointF]) -> QPainterPath:
+    """Build a cubic path through cord points for a flowing curve."""
+    path = QPainterPath()
+    if not points:
+        return path
+    if len(points) == 1:
+        path.moveTo(points[0])
+        return path
+    if len(points) == 2:
+        path.moveTo(points[0])
+        path.lineTo(points[1])
+        return path
+
+    path.moveTo(points[0])
+    for i in range(1, len(points) - 1):
+        mid = QPointF(
+            (points[i].x() + points[i + 1].x()) * 0.5,
+            (points[i].y() + points[i + 1].y()) * 0.5,
+        )
+        path.quadTo(points[i], mid)
+    path.quadTo(points[-2], points[-1])
+    return path
+
+
 class PhysicsOverlay(QWidget):
     def __init__(
         self,
@@ -224,9 +434,13 @@ class PhysicsOverlay(QWidget):
         self._role = "Arrow"
         self._role_resolver: RoleResolver | None = None
         self._drawing_enabled = True
+        self._pendant: PendantSprite | None = None
+        self._pendant_scaled: QPixmap | None = None
+        self._cursor_size = 48
         active = catalog["Arrow"]
         self.cfg.scale = active.scale
         self.cfg.hotspot = active.hotspot
+        self._hang = active.hang
         self._sprite = active.pixmap
         self._scaled = active.pixmap
         self._rebuild_scaled()
@@ -246,7 +460,11 @@ class PhysicsOverlay(QWidget):
         self.setGeometry(geo)
 
         pos = QCursor.pos()
-        self.state = PhysicsState(float(pos.x()), float(pos.y()))
+        self.state = PhysicsState(
+            float(pos.x()),
+            float(pos.y()),
+            self.cfg.cord_segments,
+        )
 
         self._timer = QTimer(self)
         self._timer.setInterval(8)
@@ -262,6 +480,22 @@ class PhysicsOverlay(QWidget):
         self._catalog = catalog
         role = self._role if self._role in catalog else "Arrow"
         self._apply_role(role, force=True)
+        edge = max(self._scaled.width(), self._scaled.height(), 1)
+        self._cursor_size = max(8, int(edge))
+        self._rebuild_pendant_scaled()
+
+    def set_pendant(
+        self,
+        pendant: PendantSprite | None,
+        *,
+        cursor_size: int | None = None,
+    ) -> None:
+        self._pendant = pendant
+        if cursor_size is not None:
+            self._cursor_size = max(8, int(cursor_size))
+        self._rebuild_pendant_scaled()
+        self.state.cord.initialized = False
+        self.update()
 
     def set_role(self, role: str) -> None:
         if role not in self._catalog:
@@ -270,17 +504,38 @@ class PhysicsOverlay(QWidget):
 
     def reset_physics(self) -> None:
         pos = QCursor.pos()
-        self.state = PhysicsState(float(pos.x()), float(pos.y()))
+        self.state = PhysicsState(
+            float(pos.x()),
+            float(pos.y()),
+            self.cfg.cord_segments,
+        )
 
     def _apply_role(self, role: str, *, force: bool) -> None:
         if not force and role == self._role:
             return
+        previous_anchor = None
+        if (
+            self._pendant_scaled is not None
+            and self.state.cord.initialized
+            and self._scaled is not None
+        ):
+            previous_anchor = self._anchor_screen()
+
         entry = self._catalog[role]
         self._role = role
         self._sprite = entry.pixmap
         self.cfg.scale = entry.scale
         self.cfg.hotspot = entry.hotspot
+        self._hang = entry.hang
         self._rebuild_scaled()
+
+        if previous_anchor is not None:
+            # Retarget hang point without yanking the flexible cord.
+            new_anchor = self._anchor_screen()
+            self.state.cord.translate(
+                new_anchor[0] - previous_anchor[0],
+                new_anchor[1] - previous_anchor[1],
+            )
         self.update()
 
     def _rebuild_scaled(self) -> None:
@@ -292,6 +547,41 @@ class PhysicsOverlay(QWidget):
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+
+    def _rebuild_pendant_scaled(self) -> None:
+        pendant = self._pendant
+        if pendant is None:
+            self._pendant_scaled = None
+            return
+        height = max(14, int(self._cursor_size * pendant.height_ratio))
+        width = max(
+            8,
+            int(pendant.pixmap.width() * (height / max(pendant.pixmap.height(), 1))),
+        )
+        self._pendant_scaled = pendant.pixmap.scaled(
+            width,
+            height,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+    def _anchor_screen(self) -> tuple[float, float]:
+        """World-space hang point on the current role sprite.
+
+        Derived from opaque art (`hang`) relative to the click hotspot, so each
+        role looks attached naturally. Role swaps translate the whole cord
+        rigidly in `_apply_role` to avoid a yank.
+        """
+        pixmap = self._scaled
+        hotspot_x = pixmap.width() * self.cfg.hotspot[0]
+        hotspot_y = pixmap.height() * self.cfg.hotspot[1]
+        local_x = pixmap.width() * self._hang[0] - hotspot_x
+        local_y = pixmap.height() * self._hang[1] - hotspot_y
+        cos_a = math.cos(self.state.angle)
+        sin_a = math.sin(self.state.angle)
+        ax = self.state.x + local_x * cos_a - local_y * sin_a
+        ay = self.state.y + local_x * sin_a + local_y * cos_a
+        return ax, ay
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -326,6 +616,7 @@ class PhysicsOverlay(QWidget):
             state.y = my
             state.angle = 0.0
             state.angular_vel = 0.0
+            state.cord.initialized = False
             return
 
         dx = mx - state.x
@@ -352,7 +643,80 @@ class PhysicsOverlay(QWidget):
             state.angle = 0.0
             state.angular_vel = 0.0
 
+        if self._pendant_scaled is not None:
+            anchor_x, anchor_y = self._anchor_screen()
+            spacing = max(
+                3.0,
+                (self._cursor_size * cfg.cord_length_ratio)
+                / max(cfg.cord_segments, 1),
+            )
+            state.cord.pin_and_step(
+                anchor_x,
+                anchor_y,
+                spacing=spacing,
+                gravity=cfg.cord_gravity,
+                damping=cfg.cord_damping,
+                iterations=cfg.cord_iterations,
+            )
+
         self.update()
+
+    def _draw_cord_and_charm(
+        self,
+        painter: QPainter,
+        origin_x: float,
+        origin_y: float,
+    ) -> None:
+        pendant = self._pendant_scaled
+        charm = self._pendant
+        if pendant is None or charm is None or not self.state.cord.initialized:
+            return
+
+        points = [
+            QPointF(x - origin_x, y - origin_y)
+            for x, y in zip(self.state.cord.x, self.state.cord.y, strict=True)
+        ]
+        path = _smooth_cord_path(points)
+
+        # Soft gold cord with a light highlight — reads as a flexible line.
+        base_width = max(1.2, self.cfg.cord_width * (self._cursor_size / 48.0))
+        shadow = QPen(QColor(60, 35, 20, 90), base_width + 1.4)
+        shadow.setCapStyle(Qt.PenCapStyle.RoundCap)
+        shadow.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.strokePath(path, shadow)
+
+        cord = QPen(QColor(232, 190, 96, 235), base_width)
+        cord.setCapStyle(Qt.PenCapStyle.RoundCap)
+        cord.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.strokePath(path, cord)
+
+        highlight = QPen(QColor(255, 240, 190, 160), max(0.8, base_width * 0.45))
+        highlight.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.strokePath(path, highlight)
+
+        # Tiny beads along the curve for chain glitter without rigid links.
+        bead_color = QColor(244, 205, 110, 220)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(bead_color)
+        for i, point in enumerate(points[1:-1], start=1):
+            if i % 2 == 0:
+                continue
+            radius = max(1.1, base_width * 0.85)
+            painter.drawEllipse(point, radius, radius)
+
+        tip = points[-1]
+        prev = points[-2]
+        angle = math.degrees(math.atan2(tip.y() - prev.y(), tip.x() - prev.x()))
+        # Charm art hangs "down"; rotate from +Y so tip tangent feels natural.
+        hang_angle = angle - 90.0
+        pivot_x = pendant.width() * charm.pivot[0]
+        pivot_y = pendant.height() * charm.pivot[1]
+
+        painter.save()
+        painter.translate(tip)
+        painter.rotate(hang_angle)
+        painter.drawPixmap(QPointF(-pivot_x, -pivot_y), pendant)
+        painter.restore()
 
     def paintEvent(self, event) -> None:  # noqa: N802
         del event
@@ -367,9 +731,15 @@ class PhysicsOverlay(QWidget):
         hotspot_x = pixmap.width() * self.cfg.hotspot[0]
         hotspot_y = pixmap.height() * self.cfg.hotspot[1]
         origin = self.geometry().topLeft()
+        origin_x = float(origin.x())
+        origin_y = float(origin.y())
+
+        if self._pendant_scaled is not None:
+            self._draw_cord_and_charm(painter, origin_x, origin_y)
+
         painter.translate(
-            self.state.x - origin.x(),
-            self.state.y - origin.y(),
+            self.state.x - origin_x,
+            self.state.y - origin_y,
         )
         painter.rotate(math.degrees(self.state.angle))
         painter.drawPixmap(QPointF(-hotspot_x, -hotspot_y), pixmap)

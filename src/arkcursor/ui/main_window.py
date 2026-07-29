@@ -1,20 +1,26 @@
-"""Main ArkCursor window."""
+"""Main QMcursor window."""
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
     QSplitter,
+    QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
     QTreeWidget,
@@ -61,15 +67,18 @@ class MainWindow(QMainWindow):
         self.themes: list[CursorTheme] = []
         self._updating_autostart = False
         self._updating_physics = False
+        self._force_quit = False
 
         self.setWindowTitle("ArkCursor 鼠标指针")
         self.resize(880, 560)
         self.setMinimumSize(720, 460)
         self._build_ui()
+        self._setup_tray()
         self._refresh_current_theme()
         self._refresh_cursor_size()
         self._load_themes()
         self._restore_physics_preference()
+        self._sync_tray_visibility()
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -115,8 +124,9 @@ class MainWindow(QMainWindow):
         self.physics_checkbox = QCheckBox("启用物理摇摆（实验）")
         self.physics_checkbox.setToolTip(
             "用叠加层绘制当前主题指针，随移动软跟随、摇摆，并按用途自动换图"
-            "（文本选择、链接等）。需要自制主题 PNG（如伊雷娜）。"
-            "关闭窗口会停止叠加层，下次启动可自动恢复。"
+            "（文本选择、链接等）。若主题含 pendant.png，会在指针下方挂坠摇摆。"
+            "需要自制主题 PNG（如伊雷娜）。启用后关闭窗口会缩到托盘继续运行；"
+            "请从托盘图标选择「退出」才会停止。"
         )
         self.physics_checkbox.toggled.connect(self._toggle_physics)
 
@@ -415,6 +425,7 @@ class MainWindow(QMainWindow):
             self.physics_service.stop()
             self.physics_service.save_enabled(False)
             self.status_label.setText("已关闭物理摇摆")
+            self._sync_tray_visibility()
             return
 
         theme = self._theme_for_physics()
@@ -437,7 +448,9 @@ class MainWindow(QMainWindow):
             return
         self.status_label.setText(
             f"已启用物理摇摆：{friendly_theme_name(theme.name)}"
+            "（关闭窗口后仍在托盘运行）"
         )
+        self._sync_tray_visibility()
 
     def _restore_physics_preference(self) -> None:
         if not self.physics_service.load_enabled():
@@ -457,6 +470,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(
             f"已恢复物理摇摆：{friendly_theme_name(theme.name)}"
         )
+        self._sync_tray_visibility()
 
     def _theme_for_physics(self) -> CursorTheme | None:
         current = self.theme_list.currentItem()
@@ -488,9 +502,131 @@ class MainWindow(QMainWindow):
         self.physics_checkbox.setChecked(checked)
         self._updating_physics = False
 
-    def closeEvent(self, event) -> None:  # noqa: N802
+    def _setup_tray(self) -> None:
+        self._tray = QSystemTrayIcon(self)
+        self._tray.setIcon(self._tray_icon())
+        self._tray.setToolTip("QMcursor")
+        menu = QMenu()
+        show_action = QAction("打开 QMcursor", menu)
+        show_action.triggered.connect(self._show_from_tray)
+        restart_action = QAction("重启 QMcursor", menu)
+        restart_action.triggered.connect(self._restart_app)
+        quit_action = QAction("退出", menu)
+        quit_action.triggered.connect(self._quit_app)
+        menu.addAction(show_action)
+        menu.addAction(restart_action)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+
+    def _tray_icon(self) -> QIcon:
+        theme = self.cursor_service.load_selected_theme()
+        if theme is not None:
+            path = resolve_cursor_image_path(theme.cursors.get("Arrow", ""))
+            if path is not None and path.is_file():
+                return QIcon(str(path))
+        bundled = (
+            Path(__file__).resolve().parents[1] / "themes" / "elaina" / "arrow.png"
+        )
+        if bundled.is_file():
+            return QIcon(str(bundled))
+        return self.windowIcon()
+
+    def _sync_tray_visibility(self) -> None:
+        if self.physics_service.is_running:
+            self._tray.setIcon(self._tray_icon())
+            self._tray.setToolTip("QMcursor · 物理摇摆运行中")
+            self._tray.show()
+        elif not self.isVisible():
+            self._tray.setToolTip("QMcursor")
+            self._tray.show()
+        else:
+            self._tray.hide()
+
+    def retreat_to_tray(self) -> None:
+        """Hide the settings window; keep physics overlay alive."""
+        self.hide()
+        self._tray.setIcon(self._tray_icon())
+        self._tray.setToolTip("QMcursor · 物理摇摆运行中")
+        self._tray.show()
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+        self._sync_tray_visibility()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._show_from_tray()
+
+    @staticmethod
+    def _relaunch_command() -> list[str]:
+        if getattr(sys, "frozen", False):
+            return [str(Path(sys.executable).resolve())]
+        python = Path(sys.executable).resolve()
+        project_root = Path(__file__).resolve().parents[3]
+        launcher = project_root / "run.py"
+        return [str(python), str(launcher)]
+
+    def _restart_app(self) -> None:
+        was_enabled = self.physics_checkbox.isChecked()
         self.physics_service.stop()
+        self.physics_service.save_enabled(was_enabled)
+        command = self._relaunch_command()
+        cwd = str(Path(command[-1]).resolve().parent) if not getattr(sys, "frozen", False) else None
+        try:
+            subprocess.Popen(
+                command,
+                cwd=cwd,
+                close_fds=True,
+            )
+        except OSError as exc:
+            self.physics_service.save_enabled(was_enabled)
+            if was_enabled:
+                theme = self._theme_for_physics()
+                if theme is not None:
+                    try:
+                        self.physics_service.start(
+                            theme, self.cursor_service.current_cursor_size()
+                        )
+                    except PhysicsCursorError:
+                        pass
+            self._show_error("无法重启 QMcursor", str(exc))
+            return
+        self._quit_app()
+
+    def _quit_app(self) -> None:
+        self._force_quit = True
+        was_enabled = self.physics_checkbox.isChecked()
+        self.physics_service.stop()
+        # Keep preference so next launch / 开机启动 can restore the overlay.
+        self.physics_service.save_enabled(was_enabled)
+        self._tray.hide()
+        self.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if not self._force_quit and self.physics_service.is_running:
+            event.ignore()
+            self.retreat_to_tray()
+            self.status_label.setText("已最小化到托盘，挂坠/物理摇摆继续运行")
+            return
+
+        if not self._force_quit:
+            self.physics_service.stop()
+        self._tray.hide()
         super().closeEvent(event)
+        if not self._force_quit:
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
 
     def _show_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)

@@ -8,9 +8,11 @@ dist/
 *.spec
 skills/
 /素材/
-/doc/
 !.cursor/
 !.cursor/skills/
 !.cursor/skills/generate-qmcursor-theme/
 !.cursor/skills/generate-qmcursor-theme/**
+!.cursor/skills/add-cursor-pendant/
+!.cursor/skills/add-cursor-pendant/**
 .cursor/skills/generate-qmcursor-theme/**/__pycache__/
+.cursor/skills/add-cursor-pendant/**/__pycache__/

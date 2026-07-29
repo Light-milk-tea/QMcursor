@@ -14,10 +14,12 @@ from PySide6.QtGui import QPixmap
 
 from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
 from arkcursor.ui.physics_overlay import (
+    PendantSprite,
     PhysicsConfig,
     PhysicsOverlay,
     ROLE_HOTSPOT_KIND,
     RoleSprite,
+    hang_fraction,
     hotspot_fraction,
     load_sprite,
     resolve_cursor_image_path,
@@ -105,9 +107,12 @@ class PhysicsCursorService:
         self._system_hidden = False
         self._handle_to_role: dict[int, str] = {}
         self._blank_templates: list[int] = []
-        # Cached decoded theme assets (pixmap + hotspot), keyed by fingerprint.
+        # Cached decoded theme assets (pixmap + hotspot + hang), keyed by fingerprint.
         self._asset_fingerprint: str | None = None
-        self._assets: dict[str, tuple[QPixmap, tuple[float, float]]] | None = None
+        self._assets: (
+            dict[str, tuple[QPixmap, tuple[float, float], tuple[float, float]]] | None
+        ) = None
+        self._pendant: PendantSprite | None = None
 
     @property
     def is_running(self) -> bool:
@@ -135,6 +140,7 @@ class PhysicsCursorService:
         else:
             self._overlay.set_catalog(catalog)
             self._overlay.reset_physics()
+        self._overlay.set_pendant(self._pendant, cursor_size=cursor_size)
 
         if not self._hide_system_cursors():
             self.stop()
@@ -147,6 +153,7 @@ class PhysicsCursorService:
         catalog = self._catalog_for_theme(theme, cursor_size)
         assert self._overlay is not None
         self._overlay.set_catalog(catalog)
+        self._overlay.set_pendant(self._pendant, cursor_size=cursor_size)
         if not self._hide_system_cursors():
             self.stop()
             raise PhysicsCursorError("重新隐藏系统光标失败，已关闭物理摇摆。")
@@ -158,6 +165,7 @@ class PhysicsCursorService:
             return
         assert self._overlay is not None
         self._overlay.set_catalog(self._catalog_from_assets(self._assets, cursor_size))
+        self._overlay.set_pendant(self._pendant, cursor_size=cursor_size)
         if not self._hide_system_cursors():
             self.stop()
             raise PhysicsCursorError("重新隐藏系统光标失败，已关闭物理摇摆。")
@@ -171,6 +179,7 @@ class PhysicsCursorService:
         self._handle_to_role.clear()
         self._asset_fingerprint = None
         self._assets = None
+        self._pendant = None
         if self._system_hidden:
             self._restore_system_cursors()
             self._system_hidden = False
@@ -195,13 +204,14 @@ class PhysicsCursorService:
         fingerprint = self._theme_fingerprint(theme)
         if self._assets is None or self._asset_fingerprint != fingerprint:
             self._assets = self._load_theme_assets(theme)
+            self._pendant = self._load_pendant_asset(theme)
             self._asset_fingerprint = fingerprint
         return self._catalog_from_assets(self._assets, cursor_size)
 
     def _load_theme_assets(
         self,
         theme: CursorTheme,
-    ) -> dict[str, tuple[QPixmap, tuple[float, float]]]:
+    ) -> dict[str, tuple[QPixmap, tuple[float, float], tuple[float, float]]]:
         arrow_path = resolve_cursor_image_path(theme.cursors.get("Arrow", ""))
         if arrow_path is None or arrow_path.suffix.lower() != ".png":
             raise PhysicsCursorError(
@@ -211,10 +221,11 @@ class PhysicsCursorService:
 
         sprites: dict[str, QPixmap] = {}
         hotspot_cache: dict[tuple[str, str], tuple[float, float]] = {}
+        hang_cache: dict[tuple[str, str], tuple[float, float]] = {}
         arrow_sprite = load_sprite(arrow_path)
         sprites[str(arrow_path.resolve())] = arrow_sprite
 
-        assets: dict[str, tuple[QPixmap, tuple[float, float]]] = {}
+        assets: dict[str, tuple[QPixmap, tuple[float, float], tuple[float, float]]] = {}
         for role in CURSOR_ROLES:
             image_path = resolve_cursor_image_path(theme.cursors.get(role, ""))
             if image_path is not None and image_path.suffix.lower() == ".png":
@@ -231,24 +242,45 @@ class PhysicsCursorService:
             cache_key = (key, kind)
             hotspot = hotspot_cache.get(cache_key)
             if hotspot is None:
-                hotspot = hotspot_fraction(pixmap.toImage(), kind)
+                image = pixmap.toImage()
+                hotspot = hotspot_fraction(image, kind)
                 hotspot_cache[cache_key] = hotspot
-            assets[role] = (pixmap, hotspot)
+                hang_cache[cache_key] = hang_fraction(image, kind)
+            hang = hang_cache[cache_key]
+            assets[role] = (pixmap, hotspot, hang)
         return assets
 
     @staticmethod
+    def _load_pendant_asset(theme: CursorTheme) -> PendantSprite | None:
+        """Load optional theme-dir pendant.png hanging charm."""
+        arrow_path = resolve_cursor_image_path(theme.cursors.get("Arrow", ""))
+        if arrow_path is None:
+            return None
+        pendant_path = arrow_path.parent / "pendant.png"
+        if not pendant_path.is_file():
+            return None
+        try:
+            pixmap = load_sprite(pendant_path)
+        except ValueError:
+            return None
+        pivot = hotspot_fraction(pixmap.toImage(), "north")
+        # Charm only — the hanging line is drawn as a flexible cord in overlay.
+        return PendantSprite(pixmap=pixmap, pivot=pivot, height_ratio=0.85)
+
+    @staticmethod
     def _catalog_from_assets(
-        assets: dict[str, tuple[QPixmap, tuple[float, float]]],
+        assets: dict[str, tuple[QPixmap, tuple[float, float], tuple[float, float]]],
         cursor_size: int,
     ) -> dict[str, RoleSprite]:
         catalog: dict[str, RoleSprite] = {}
-        for role, (pixmap, hotspot) in assets.items():
+        for role, (pixmap, hotspot, hang) in assets.items():
             edge = max(pixmap.width(), pixmap.height(), 1)
             scale = max(0.05, float(cursor_size) / float(edge))
             catalog[role] = RoleSprite(
                 pixmap=pixmap,
                 hotspot=hotspot,
                 scale=scale,
+                hang=hang,
             )
         return catalog
 
@@ -265,6 +297,19 @@ class PhysicsCursorService:
                 parts.append(f"{role}:{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}")
             except OSError:
                 parts.append(f"{role}:{path}")
+        arrow_path = resolve_cursor_image_path(theme.cursors.get("Arrow", ""))
+        if arrow_path is not None:
+            pendant_path = arrow_path.parent / "pendant.png"
+            if pendant_path.is_file():
+                try:
+                    stat = pendant_path.stat()
+                    parts.append(
+                        f"pendant:{pendant_path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}"
+                    )
+                except OSError:
+                    parts.append(f"pendant:{pendant_path}")
+            else:
+                parts.append("pendant:")
         return "|".join(parts)
 
     @staticmethod

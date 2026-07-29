@@ -9,6 +9,7 @@ from arkcursor.services.physics_cursor_service import (
     PhysicsCursorService,
 )
 from arkcursor.ui.physics_overlay import (
+    hang_fraction,
     hotspot_fraction,
     resolve_arrow_image_path,
     resolve_cursor_image_path,
@@ -90,6 +91,106 @@ def test_catalog_falls_back_missing_roles_to_arrow(
     assert set(catalog) == set(CURSOR_ROLES)
     assert catalog["Hand"].pixmap is catalog["Arrow"].pixmap
     assert catalog["Hand"].hotspot != catalog["Arrow"].hotspot
+
+
+def test_load_pendant_asset_from_theme_dir(
+    tmp_path: Path,
+    qapp: QGuiApplication,
+) -> None:
+    del qapp
+    arrow = tmp_path / "arrow.png"
+    pendant = tmp_path / "pendant.png"
+    arrow_image = QImage(32, 32, QImage.Format.Format_ARGB32)
+    arrow_image.fill(QColor(0, 0, 0, 0))
+    for y in range(10):
+        for x in range(10):
+            arrow_image.setPixelColor(x, y, QColor(255, 0, 0, 255))
+    assert arrow_image.save(str(arrow))
+
+    pendant_image = QImage(20, 40, QImage.Format.Format_ARGB32)
+    pendant_image.fill(QColor(0, 0, 0, 0))
+    for y in range(4, 36):
+        for x in range(6, 14):
+            pendant_image.setPixelColor(x, y, QColor(255, 200, 50, 255))
+    assert pendant_image.save(str(pendant))
+
+    theme = CursorTheme(
+        name="挂坠主题",
+        cursors={
+            role: str(arrow) if role == "Arrow" else "" for role in CURSOR_ROLES
+        },
+        is_custom=True,
+    )
+    service = PhysicsCursorService(tmp_path)
+    catalog = service._catalog_for_theme(theme, 48)
+    assert "Arrow" in catalog
+    assert service._pendant is not None
+    assert service._pendant.pixmap.width() > 0
+    assert 0.0 <= service._pendant.pivot[0] <= 1.0
+    assert 0.0 <= service._pendant.pivot[1] <= 1.0
+
+
+def test_load_pendant_asset_optional(
+    tmp_path: Path,
+    qapp: QGuiApplication,
+) -> None:
+    del qapp
+    arrow = tmp_path / "arrow.png"
+    image = QImage(32, 32, QImage.Format.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))
+    image.setPixelColor(2, 2, QColor(255, 0, 0, 255))
+    assert image.save(str(arrow))
+
+    theme = CursorTheme(
+        name="无挂坠",
+        cursors={
+            role: str(arrow) if role == "Arrow" else "" for role in CURSOR_ROLES
+        },
+        is_custom=True,
+    )
+    service = PhysicsCursorService(tmp_path)
+    service._catalog_for_theme(theme, 48)
+    assert service._pendant is None
+
+
+def test_hang_fraction_bottom_center(qapp: QGuiApplication) -> None:
+    del qapp
+    image = QImage(20, 20, QImage.Format.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))
+    for y in range(4, 16):
+        for x in range(5, 15):
+            image.setPixelColor(x, y, QColor(255, 255, 255, 255))
+
+    hx, hy = hang_fraction(image, "center")
+    assert 0.4 < hx < 0.6
+    assert hy > 0.65
+
+
+def test_catalog_includes_role_hang(
+    tmp_path: Path,
+    qapp: QGuiApplication,
+) -> None:
+    del qapp
+    arrow = tmp_path / "arrow.png"
+    image = QImage(32, 32, QImage.Format.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))
+    for y in range(4, 28):
+        for x in range(4, 28):
+            image.setPixelColor(x, y, QColor(255, 0, 0, 255))
+    assert image.save(str(arrow))
+
+    theme = CursorTheme(
+        name="挂点",
+        cursors={
+            role: str(arrow) if role == "Arrow" else "" for role in CURSOR_ROLES
+        },
+        is_custom=True,
+    )
+    service = PhysicsCursorService(tmp_path)
+    catalog = service._catalog_for_theme(theme, 48)
+    assert 0.0 <= catalog["Arrow"].hang[0] <= 1.0
+    assert 0.0 <= catalog["Arrow"].hang[1] <= 1.0
+    assert catalog["SizeWE"].hang[1] >= catalog["Arrow"].hotspot[1]
 
 
 def test_hotspot_fraction_northwest(qapp: QGuiApplication) -> None:
