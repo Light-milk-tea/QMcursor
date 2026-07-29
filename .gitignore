@@ -5,10 +5,14 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-*.spec
+/*.spec
+ArkCursor.spec
+QMcursor.spec
 QMcursor.exe
 _internal/
 *.zip
+# Keep release zip out of git (too large); publish via GitHub Releases.
+/release/
 skills/
 /素材/
 !.cursor/

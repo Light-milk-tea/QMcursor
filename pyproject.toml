@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arkcursor"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Windows cursor theme switcher built with PySide6"
 readme = {text = "ArkCursor — Windows cursor theme switcher.", content-type = "text/plain"}
 requires-python = ">=3.11"

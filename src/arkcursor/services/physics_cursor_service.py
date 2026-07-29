@@ -28,6 +28,32 @@ from arkcursor.ui.physics_overlay import (
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 SPI_SETCURSORS = 0x0057
 CURSOR_SHOWING = 0x00000001
+GA_ROOT = 2
+
+# Window bands that sit above ZBID_DESKTOP (Start, network flyout, Search, …).
+# Ordinary HWND_TOPMOST cannot cover these; temporarily restore the real cursor.
+ZBID_IMMERSIVE_NOTIFICATION = 4
+ZBID_IMMERSIVE_APPCHROME = 5
+ZBID_IMMERSIVE_MOGO = 6
+ZBID_IMMERSIVE_EDGY = 7
+ZBID_IMMERSIVE_SEARCH = 13
+ZBID_SYSTEM_TOOLS = 16
+SHELL_COVER_BANDS = frozenset(
+    {
+        ZBID_IMMERSIVE_NOTIFICATION,
+        ZBID_IMMERSIVE_APPCHROME,
+        ZBID_IMMERSIVE_MOGO,
+        ZBID_IMMERSIVE_EDGY,
+        ZBID_IMMERSIVE_SEARCH,
+        ZBID_SYSTEM_TOOLS,
+    }
+)
+
+_GetWindowBand = ctypes.WINFUNCTYPE(
+    wintypes.BOOL,
+    wintypes.HWND,
+    ctypes.POINTER(wintypes.DWORD),
+)(("GetWindowBand", user32))
 
 # OCR_* / IDC_* share these ids for the standard scheme roles.
 ROLE_TO_OCR = {
@@ -87,6 +113,51 @@ user32.SystemParametersInfoW.argtypes = [
     ctypes.c_uint,
 ]
 user32.SystemParametersInfoW.restype = wintypes.BOOL
+user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+user32.GetCursorPos.restype = wintypes.BOOL
+user32.WindowFromPoint.argtypes = [wintypes.POINT]
+user32.WindowFromPoint.restype = wintypes.HWND
+user32.GetForegroundWindow.argtypes = []
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+user32.GetAncestor.restype = wintypes.HWND
+
+
+def is_shell_cover_band(band: int) -> bool:
+    """True when the band is above desktop topmost (Start / Wi‑Fi / Search…)."""
+    return int(band) in SHELL_COVER_BANDS
+
+
+def get_window_band(hwnd: int) -> int | None:
+    if not hwnd:
+        return None
+    band = wintypes.DWORD(0)
+    try:
+        if not _GetWindowBand(wintypes.HWND(hwnd), ctypes.byref(band)):
+            return None
+    except (AttributeError, OSError, ValueError, TypeError):
+        return None
+    return int(band.value)
+
+
+def shell_ui_obscures_overlay() -> bool:
+    """Detect Start menu, network flyout, Search, Alt-Tab, etc. above our band."""
+    foreground = int(user32.GetForegroundWindow() or 0)
+    if foreground:
+        root = int(user32.GetAncestor(foreground, GA_ROOT) or foreground)
+        band = get_window_band(root)
+        if band is not None and is_shell_cover_band(band):
+            return True
+
+    point = wintypes.POINT()
+    if not user32.GetCursorPos(ctypes.byref(point)):
+        return False
+    hwnd = int(user32.WindowFromPoint(point) or 0)
+    if not hwnd:
+        return False
+    root = int(user32.GetAncestor(hwnd, GA_ROOT) or hwnd)
+    band = get_window_band(root)
+    return band is not None and is_shell_cover_band(band)
 
 
 class PhysicsCursorError(RuntimeError):
@@ -105,6 +176,8 @@ class PhysicsCursorService:
         self.state_path = self.data_dir / "physics.json"
         self._overlay: PhysicsOverlay | None = None
         self._system_hidden = False
+        # When Start / Wi‑Fi flyouts cover the overlay, show the real themed cursor.
+        self._shell_fallback_active = False
         self._handle_to_role: dict[int, str] = {}
         self._blank_templates: list[int] = []
         # Cached decoded theme assets (pixmap + hotspot + hang), keyed by fingerprint.
@@ -180,6 +253,7 @@ class PhysicsCursorService:
         self._asset_fingerprint = None
         self._assets = None
         self._pendant = None
+        self._shell_fallback_active = False
         if self._system_hidden:
             self._restore_system_cursors()
             self._system_hidden = False
@@ -187,6 +261,11 @@ class PhysicsCursorService:
 
     def resolve_active_role(self) -> tuple[str, bool]:
         """Return (role, cursor_showing) for the current system cursor."""
+        self._update_shell_fallback()
+        if self._shell_fallback_active:
+            # Overlay cannot paint above shell chrome; real cursor is restored.
+            return "Arrow", False
+
         info = CURSORINFO()
         info.cbSize = ctypes.sizeof(CURSORINFO)
         if not user32.GetCursorInfo(ctypes.byref(info)):
@@ -195,6 +274,23 @@ class PhysicsCursorService:
         handle = int(info.hCursor or 0)
         role = self._handle_to_role.get(handle, "Arrow")
         return role, showing
+
+    def _update_shell_fallback(self) -> None:
+        """Toggle real cursor when Win Start / Wi‑Fi / Search covers the overlay."""
+        if not self.is_running or not self._system_hidden:
+            return
+        need_fallback = shell_ui_obscures_overlay()
+        if need_fallback == self._shell_fallback_active:
+            return
+        if need_fallback:
+            self._restore_system_cursors()
+            self._shell_fallback_active = True
+            return
+        if self._hide_system_cursors():
+            self._shell_fallback_active = False
+        else:
+            # Keep real cursor visible rather than leaving the user with none.
+            self._shell_fallback_active = True
 
     def _catalog_for_theme(
         self,

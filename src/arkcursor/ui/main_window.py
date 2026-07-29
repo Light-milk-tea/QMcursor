@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -68,8 +69,9 @@ class MainWindow(QMainWindow):
         self._updating_autostart = False
         self._updating_physics = False
         self._force_quit = False
+        self._background_handoff: Callable[[], None] | None = None
 
-        self.setWindowTitle("ArkCursor 鼠标指针")
+        self.setWindowTitle("QMcursor 鼠标指针")
         self.resize(880, 560)
         self.setMinimumSize(720, 460)
         self._build_ui()
@@ -89,7 +91,7 @@ class MainWindow(QMainWindow):
         title = QLabel("鼠标指针样式")
         title.setObjectName("title")
         description = QLabel(
-            "选择 Windows 已安装或 ArkCursor 内置的指针方案。"
+            "选择 Windows 已安装或 QMcursor 内置的指针方案。"
             "应用前会自动备份当前设置。"
         )
         description.setWordWrap(True)
@@ -455,6 +457,10 @@ class MainWindow(QMainWindow):
     def _restore_physics_preference(self) -> None:
         if not self.physics_service.load_enabled():
             return
+        if self.physics_service.is_running:
+            self._set_physics_checked(True)
+            self._sync_tray_visibility()
+            return
         theme = self._theme_for_physics()
         if theme is None:
             self.physics_service.save_enabled(False)
@@ -471,6 +477,15 @@ class MainWindow(QMainWindow):
             f"已恢复物理摇摆：{friendly_theme_name(theme.name)}"
         )
         self._sync_tray_visibility()
+
+    def set_background_handoff(self, callback: Callable[[], None] | None) -> None:
+        """When set, closing with physics destroys this window and calls callback."""
+        self._background_handoff = callback
+
+    def prepare_external_quit(self) -> None:
+        """Allow the window to close without stopping a shared physics service."""
+        self._force_quit = True
+        self._background_handoff = None
 
     def _theme_for_physics(self) -> CursorTheme | None:
         current = self.theme_list.currentItem()
@@ -546,12 +561,25 @@ class MainWindow(QMainWindow):
 
     def retreat_to_tray(self) -> None:
         """Hide the settings window; keep physics overlay alive."""
+        self._unload_heavy_ui()
         self.hide()
         self._tray.setIcon(self._tray_icon())
         self._tray.setToolTip("QMcursor · 物理摇摆运行中")
         self._tray.show()
 
+    def _unload_heavy_ui(self) -> None:
+        """Drop theme list / previews so tray-resident mode holds less RAM."""
+        self.details.setRowCount(0)
+        self.theme_list.clear()
+        self.themes.clear()
+        app = QApplication.instance()
+        if app is not None:
+            app.sendPostedEvents(None, 0)
+            app.processEvents()
+
     def _show_from_tray(self) -> None:
+        if not self.themes:
+            self._load_themes()
         self.showNormal()
         self.activateWindow()
         self.raise_()
@@ -614,6 +642,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if not self._force_quit and self.physics_service.is_running:
+            handoff = self._background_handoff
+            if handoff is not None:
+                self._background_handoff = None
+                self._tray.hide()
+                self._unload_heavy_ui()
+                event.accept()
+                handoff()
+                return
             event.ignore()
             self.retreat_to_tray()
             self.status_label.setText("已最小化到托盘，挂坠/物理摇摆继续运行")

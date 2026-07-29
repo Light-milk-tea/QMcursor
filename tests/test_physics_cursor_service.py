@@ -7,8 +7,10 @@ from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
 from arkcursor.services.physics_cursor_service import (
     PhysicsCursorError,
     PhysicsCursorService,
+    is_shell_cover_band,
 )
 from arkcursor.ui.physics_overlay import (
+    ensure_overlay_topmost,
     hang_fraction,
     hotspot_fraction,
     resolve_arrow_image_path,
@@ -207,3 +209,15 @@ def test_hotspot_fraction_northwest(qapp: QGuiApplication) -> None:
     cx, cy = hotspot_fraction(image, "center")
     assert cx == pytest.approx(5 / 9)
     assert cy == pytest.approx(5.5 / 9)
+
+
+def test_ensure_overlay_topmost_ignores_null_hwnd() -> None:
+    # Must not raise when the overlay has not created a native window yet.
+    ensure_overlay_topmost(0)
+
+
+def test_shell_cover_bands() -> None:
+    assert is_shell_cover_band(1) is False  # desktop
+    assert is_shell_cover_band(6) is True  # Start (MOGO)
+    assert is_shell_cover_band(4) is True  # network / Action Center
+    assert is_shell_cover_band(13) is True  # Search

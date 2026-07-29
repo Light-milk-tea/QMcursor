@@ -5,6 +5,7 @@ Windows 上换鼠标指针样式的小工具。选一套喜欢的主题，点应
 ![伊雷娜](doc/previews/elaina.png)
 ![塔菲](doc/previews/taffy.png)
 ![光之美少女新版](doc/previews/precure_new.png)
+![雷电将军新版](doc/previews/raiden-q-dango-01-mid.png)
 
 ## 能做什么
 
@@ -35,7 +36,9 @@ Windows 上换鼠标指针样式的小工具。选一套喜欢的主题，点应
 |------|------|
 | 伊雷娜 | ![伊雷娜](doc/previews/elaina.png) |
 | 塔菲 | ![塔菲](doc/previews/taffy.png) |
+| 塔菲新版 | ![塔菲新版](doc/previews/taffy-new-01-normal-select.png) |
 | 光之美少女新版 | ![光之美少女新版](doc/previews/precure_new.png) |
+| 雷电将军新版 | ![雷电将军新版](doc/previews/raiden-q-dango-01-mid.png) |
 
 
 伊雷娜主题已带挂坠，开启物理摇摆就能看到：

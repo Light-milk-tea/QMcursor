@@ -26,6 +26,14 @@ GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000
 WS_EX_TRANSPARENT = 0x00000020
 WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_TOPMOST = 0x00000008
+HWND_TOPMOST = -1
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+# Re-assert topmost periodically so tray menus / toasts cannot bury the overlay.
+_TOPMOST_REASSERT_TICKS = 8
+DWMWA_EXCLUDED_FROM_PEEK = 12
 
 # Matches generate-qmcursor-theme hotspot kinds.
 ROLE_HOTSPOT_KIND = {
@@ -182,13 +190,54 @@ class PhysicsState:
         self.cord = CordState(cord_segments)
 
 
+def ensure_overlay_topmost(hwnd: int) -> None:
+    """Keep the fake cursor above other topmost UI (tray menus, balloons, etc.).
+
+    Real OS cursors paint above every window; our sprite lives in a normal
+    topmost layered window, so competitors can cover it unless we re-assert.
+    """
+    if hwnd == 0:
+        return
+    user32.SetWindowPos(
+        hwnd,
+        HWND_TOPMOST,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    )
+
+
+def _exclude_from_aero_peek(hwnd: int) -> None:
+    """Stop Win+D / taskbar peek from swallowing the overlay."""
+    if hwnd == 0:
+        return
+    try:
+        value = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_EXCLUDED_FROM_PEEK,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+    except (AttributeError, OSError, ValueError):
+        pass
+
+
 def set_click_through(hwnd: int) -> None:
     style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
     user32.SetWindowLongW(
         hwnd,
         GWL_EXSTYLE,
-        style | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
+        style
+        | WS_EX_LAYERED
+        | WS_EX_TRANSPARENT
+        | WS_EX_TOOLWINDOW
+        | WS_EX_TOPMOST,
     )
+    _exclude_from_aero_peek(hwnd)
+    ensure_overlay_topmost(hwnd)
 
 
 def load_sprite(path: Path) -> QPixmap:
@@ -466,8 +515,12 @@ class PhysicsOverlay(QWidget):
             self.cfg.cord_segments,
         )
 
+        self._hwnd = 0
+        self._topmost_tick = 0
+
         self._timer = QTimer(self)
-        self._timer.setInterval(8)
+        # 16ms (~60 FPS) is enough for sway and uses less CPU than 8ms.
+        self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
@@ -585,9 +638,21 @@ class PhysicsOverlay(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        set_click_through(int(self.winId()))
+        self._hwnd = int(self.winId())
+        set_click_through(self._hwnd)
+
+    def _reassert_topmost_if_needed(self) -> None:
+        self._topmost_tick += 1
+        if self._topmost_tick < _TOPMOST_REASSERT_TICKS:
+            return
+        self._topmost_tick = 0
+        hwnd = self._hwnd or int(self.winId())
+        self._hwnd = hwnd
+        ensure_overlay_topmost(hwnd)
 
     def _tick(self) -> None:
+        self._reassert_topmost_if_needed()
+
         if self._role_resolver is not None:
             role, showing = self._role_resolver()
             previous_drawing = self._drawing_enabled

@@ -1,4 +1,4 @@
-"""ArkCursor application entry point."""
+"""QMcursor application entry point."""
 
 from __future__ import annotations
 
@@ -42,19 +42,23 @@ def _physics_enabled_at_startup() -> bool:
 def run_gui(*, start_hidden: bool = False) -> int:
     from PySide6.QtWidgets import QApplication
 
-    from arkcursor.ui.main_window import MainWindow
+    from arkcursor.ui.physics_tray_host import PhysicsTrayHost
 
     app = QApplication(sys.argv[:1])
-    app.setApplicationName("ArkCursor")
-    app.setOrganizationName("ArkCursor")
+    app.setApplicationName("QMcursor")
+    app.setOrganizationName("QMcursor")
     # Keep running in tray while physics overlay is active.
     app.setQuitOnLastWindowClosed(False)
-    window = MainWindow()
-    app.aboutToQuit.connect(window.physics_service.stop)
-    if start_hidden and window.physics_service.is_running:
-        window.retreat_to_tray()
-    else:
-        window.show()
+
+    host = PhysicsTrayHost()
+    app.aboutToQuit.connect(host.stop)
+
+    if start_hidden:
+        if host.start():
+            return app.exec()
+        # Preference says physics on, but it failed — open settings instead.
+
+    host.open_settings()
     return app.exec()
 
 
@@ -62,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if os.name != "nt":
-        print("ArkCursor 仅支持 Windows。", file=sys.stderr)
+        print("QMcursor 仅支持 Windows。", file=sys.stderr)
         return 2
 
     if args.startup:
