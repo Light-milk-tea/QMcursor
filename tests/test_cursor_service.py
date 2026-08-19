@@ -208,6 +208,19 @@ def test_bundled_cursor_themes_are_available(theme_name: str) -> None:
     assert theme.missing_files() == []
 
 
+def test_bundled_myrtle_ani_theme_is_available() -> None:
+    themes = CursorService.list_bundled_themes()
+
+    theme = next(item for item in themes if item.name == "桃金娘")
+    assert theme.kind == "ani"
+    assert theme.is_animated is True
+    assert Path(theme.cursors["Arrow"]).name == "arrow.ani"
+    assert Path(theme.cursors["Wait"]).name == "wait.ani"
+    assert Path(theme.cursors["Hand"]).name == "hand.ani"
+    assert all(theme.cursors[role] for role in CURSOR_ROLES)
+    assert theme.missing_files() == []
+
+
 def test_retired_cursor_themes_are_not_listed() -> None:
     names = {theme.name for theme in CursorService.list_bundled_themes()}
 

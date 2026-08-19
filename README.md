@@ -4,6 +4,7 @@ Windows 上换鼠标指针样式的小工具。选一套喜欢的主题，点应
 
 ![Mon3tr 普通选择](doc/previews/mon3tr-normal.png)
 ![魔理沙普通选择](doc/previews/marisa-normal.png)
+![桃金娘普通选择](doc/previews/myrtle-normal.png)
 
 ## 能做什么
 
@@ -42,6 +43,10 @@ Windows 上换鼠标指针样式的小工具。选一套喜欢的主题，点应
 原生 ANI 与物理摇摆是两种不同模式：ANI 由 Windows 播放，QMcursor 可以退出；
 物理摇摆由透明叠加层绘制，需要托盘常驻。选择 ANI 主题时物理摇摆会被禁用。
 
+## 自带主题
+
+软件内置 **桃金娘** 原生 ANI 主题，打开后可在「ANI 指针」中直接应用。
+
 ## ANI 形态参考
 
 项目制作新 ANI 光标时，以 Mon3tr 与魔理沙光标的角色态、功能态分布和逐帧节奏作为质量参考：
@@ -50,6 +55,7 @@ Windows 上换鼠标指针样式的小工具。选一套喜欢的主题，点应
 |------|----------|----------|------|
 | Mon3tr | ![Mon3tr 普通选择](doc/previews/mon3tr-normal.png) | ![Mon3tr 后台运行](doc/previews/mon3tr-working.png) | ![Mon3tr 忙碌](doc/previews/mon3tr-busy.png) |
 | 魔理沙 | ![魔理沙普通选择](doc/previews/marisa-normal.png) | ![魔理沙后台运行](doc/previews/marisa-working.png) | ![魔理沙忙碌](doc/previews/marisa-busy.png) |
+| 桃金娘 | ![桃金娘普通选择](doc/previews/myrtle-normal.png) | ![桃金娘后台运行](doc/previews/myrtle-working.png) | ![桃金娘忙碌](doc/previews/myrtle-busy.png) |
 
 
 ## 开发相关

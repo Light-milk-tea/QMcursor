@@ -1,0 +1,23 @@
+{
+  "name": "桃金娘",
+  "source": 1,
+  "is_custom": true,
+  "kind": "ani",
+  "cursors": {
+    "Arrow": "arrow.ani",
+    "Help": "help.ani",
+    "AppStarting": "app_starting.ani",
+    "Wait": "wait.ani",
+    "Crosshair": "crosshair.ani",
+    "IBeam": "ibeam.ani",
+    "NWPen": "pen.ani",
+    "No": "no.ani",
+    "SizeNS": "size_ns.ani",
+    "SizeWE": "size_we.ani",
+    "SizeNWSE": "size_nwse.ani",
+    "SizeNESW": "size_nesw.ani",
+    "SizeAll": "size_all.ani",
+    "UpArrow": "up_arrow.ani",
+    "Hand": "hand.ani"
+  }
+}
