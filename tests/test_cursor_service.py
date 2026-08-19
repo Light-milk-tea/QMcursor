@@ -1,9 +1,12 @@
 import json
 from pathlib import Path
+import struct
+import zipfile
 
 import pytest
 
 import arkcursor.services.cursor_service as cursor_module
+from arkcursor.main import apply_at_startup
 from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
 from arkcursor.services.cursor_service import (
     CURSOR_SIZE_VALUE,
@@ -18,6 +21,16 @@ class FakeRegistryKey:
 
     def __exit__(self, exc_type, exc_value, traceback):
         return False
+
+
+def valid_ani_bytes() -> bytes:
+    header = struct.pack("<9I", 36, 1, 1, 32, 32, 32, 1, 6, 1)
+    anih = b"anih" + struct.pack("<I", len(header)) + header
+    cursor_header = struct.pack("<HHH", 0, 2, 0)
+    icon = b"icon" + struct.pack("<I", len(cursor_header)) + cursor_header
+    frame_list = b"LIST" + struct.pack("<I", 4 + len(icon)) + b"fram" + icon
+    payload = b"ACON" + anih + frame_list
+    return b"RIFF" + struct.pack("<I", len(payload)) + payload
 
 
 def test_expand_cursor_path_expands_environment(
@@ -67,12 +80,20 @@ def test_apply_failure_restores_previous_registry_values(
         "Arrow": {"value": "", "type": cursor_module.winreg.REG_SZ},
     }
     restored: list[dict] = []
+    restored_schemes: list[tuple[str, tuple[str, int] | None]] = []
     reload_calls = 0
 
     monkeypatch.setattr(service, "ensure_initial_backup", lambda: None)
     monkeypatch.setattr(service, "_read_managed_values", lambda: previous)
+    previous_scheme = ("old.cur", cursor_module.winreg.REG_SZ)
+    monkeypatch.setattr(service, "_read_user_scheme", lambda name: previous_scheme)
     monkeypatch.setattr(
         service, "_restore_managed_values", lambda values: restored.append(values)
+    )
+    monkeypatch.setattr(
+        service,
+        "_restore_user_scheme",
+        lambda name, value: restored_schemes.append((name, value)),
     )
     monkeypatch.setattr(
         cursor_module.winreg,
@@ -97,6 +118,7 @@ def test_apply_failure_restores_previous_registry_values(
         service.apply_theme(CursorTheme("测试", {}, source=2))
 
     assert restored == [previous]
+    assert restored_schemes == [("测试", previous_scheme)]
     assert reload_calls == 2
 
 
@@ -194,5 +216,114 @@ def test_retired_cursor_themes_are_not_listed() -> None:
             "粉白像素（概念版）",
             "纸鹤与风铃",
             "纸鹤与风铃（生图试用版）",
+            "塔菲",
+            "雷电将军",
         }
     )
+
+
+def test_import_ani_directory_maps_mon3tr_names(tmp_path: Path) -> None:
+    service = CursorService(tmp_path / "data")
+    source = tmp_path / "pack"
+    source.mkdir()
+    (source / "Normal.ani").write_bytes(valid_ani_bytes())
+    (source / "Busy.ani").write_bytes(valid_ani_bytes())
+    (source / "Person.ani").write_bytes(valid_ani_bytes())
+    (source / "install.inf").write_text(
+        '[Strings]\nSCHEME_NAME = "测试动态主题"\n',
+        encoding="utf-8",
+    )
+
+    imported = service.import_ani_pack(source)
+
+    assert imported.name == "测试动态主题"
+    assert imported.kind == "ani"
+    assert Path(imported.cursors["Arrow"]).name == "arrow.ani"
+    assert Path(imported.cursors["Wait"]).name == "wait.ani"
+    assert imported.cursors["Hand"] == ""
+    assert all("Person" not in theme.cursors for theme in [imported])
+    discovered = service.list_imported_themes()
+    assert [theme.name for theme in discovered] == ["测试动态主题"]
+    assert discovered[0].missing_files() == []
+
+
+def test_import_ani_zip_rejects_traversal(tmp_path: Path) -> None:
+    archive_path = tmp_path / "unsafe.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("../Normal.ani", valid_ani_bytes())
+
+    with pytest.raises(CursorServiceError, match="不安全"):
+        CursorService(tmp_path / "data").import_ani_pack(archive_path)
+
+
+def test_import_rejects_invalid_ani_container(tmp_path: Path) -> None:
+    source = tmp_path / "broken"
+    source.mkdir()
+    (source / "Normal.ani").write_bytes(b"RIFF\x04\x00\x00\x00ACON")
+
+    with pytest.raises(CursorServiceError, match="不是有效"):
+        CursorService(tmp_path / "data").import_ani_pack(source)
+
+
+def test_apply_ani_theme_selects_size_and_registers_scheme(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = CursorService(tmp_path / "data")
+    arrow_32 = tmp_path / "32" / "arrow.ani"
+    arrow_64 = tmp_path / "64" / "arrow.ani"
+    arrow_32.parent.mkdir()
+    arrow_64.parent.mkdir()
+    arrow_32.write_bytes(valid_ani_bytes())
+    arrow_64.write_bytes(valid_ani_bytes())
+    theme = CursorTheme(
+        "多尺寸动画",
+        {"Arrow": str(arrow_32)},
+        kind="ani",
+        sizes={
+            32: {"Arrow": str(arrow_32)},
+            64: {"Arrow": str(arrow_64)},
+        },
+    )
+    writes: list[tuple[str, int, object]] = []
+    monkeypatch.setattr(service, "current_cursor_size", lambda: 60)
+    monkeypatch.setattr(service, "ensure_initial_backup", lambda: None)
+    monkeypatch.setattr(service, "_read_managed_values", lambda: {})
+    monkeypatch.setattr(service, "_read_user_scheme", lambda name: None)
+    monkeypatch.setattr(service, "_reload_system_cursors", lambda: None)
+    monkeypatch.setattr(
+        cursor_module.winreg,
+        "CreateKeyEx",
+        lambda *args, **kwargs: FakeRegistryKey(),
+    )
+    monkeypatch.setattr(
+        cursor_module.winreg,
+        "SetValueEx",
+        lambda key, name, reserved, value_type, value: writes.append(
+            (name, value_type, value)
+        ),
+    )
+
+    service.apply_theme(theme)
+
+    assert ("Arrow", cursor_module.winreg.REG_SZ, str(arrow_64)) in writes
+    scheme_write = next(item for item in writes if item[0] == theme.name)
+    assert str(arrow_64) in str(scheme_write[2]).split(",")[0]
+    assert service.load_selected_theme() == theme
+
+
+def test_startup_reapplies_saved_ani_theme() -> None:
+    theme = CursorTheme("开机动画", {}, kind="ani")
+    calls: list[tuple[CursorTheme, bool]] = []
+
+    class StartupService:
+        @staticmethod
+        def load_selected_theme() -> CursorTheme:
+            return theme
+
+        @staticmethod
+        def apply_theme(selected: CursorTheme, *, remember: bool = True) -> None:
+            calls.append((selected, remember))
+
+    assert apply_at_startup(StartupService()) == 0
+    assert calls == [(theme, False)]

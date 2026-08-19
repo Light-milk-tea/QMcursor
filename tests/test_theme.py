@@ -52,6 +52,36 @@ def test_theme_round_trip() -> None:
     assert restored == original
 
 
+def test_ani_theme_resolves_nearest_size_and_round_trips(tmp_path: Path) -> None:
+    arrow_32 = str(tmp_path / "32" / "arrow.ani")
+    arrow_64 = str(tmp_path / "64" / "arrow.ani")
+    original = CursorTheme(
+        "动态主题",
+        {"Arrow": arrow_32},
+        kind="ani",
+        sizes={32: {"Arrow": arrow_32}, 64: {"Arrow": arrow_64}},
+        frame_interval_ms=100,
+    )
+
+    assert original.is_animated is True
+    assert original.nearest_size(48) == 32
+    assert original.nearest_size(60) == 64
+    assert original.resolved_cursors(60)["Arrow"] == arrow_64
+    assert CursorTheme.from_dict(original.to_dict()) == original
+
+
+def test_scheme_with_ani_path_is_detected_as_animated() -> None:
+    theme = CursorTheme.from_scheme_value(
+        "系统动态主题",
+        r"C:\Cursors\Normal.ani",
+        1,
+        expand_path=lambda value: value,
+    )
+
+    assert theme.kind == "ani"
+    assert theme.is_animated is True
+
+
 @pytest.mark.parametrize(
     ("system_name", "display_name"),
     [

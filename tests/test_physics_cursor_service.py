@@ -67,6 +67,14 @@ def test_catalog_for_theme_requires_arrow_png(tmp_path: Path) -> None:
         service._catalog_for_theme(theme, 48)
 
 
+def test_physics_rejects_animated_theme(tmp_path: Path) -> None:
+    service = PhysicsCursorService(tmp_path)
+    theme = CursorTheme("原生动画", {}, kind="ani")
+
+    with pytest.raises(PhysicsCursorError, match="不能同时启用"):
+        service.start(theme, 48)
+
+
 def test_catalog_falls_back_missing_roles_to_arrow(
     tmp_path: Path,
     qapp: QGuiApplication,

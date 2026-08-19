@@ -12,6 +12,7 @@ from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -51,6 +52,23 @@ from arkcursor.services.physics_cursor_service import (
 from arkcursor.ui.cursor_preview import CursorPreview
 from arkcursor.ui.physics_overlay import resolve_cursor_image_path
 
+QM_CUSTOM_CATEGORY = "QMcursor 自制指针"
+
+
+def theme_category(theme: CursorTheme) -> str:
+    """Return the exclusive UI category for a cursor theme."""
+    if theme.is_custom:
+        return "ANI 指针" if theme.is_animated else QM_CUSTOM_CATEGORY
+    cursor_paths = [path for path in theme.cursors.values() if path]
+    if cursor_paths and all(path.casefold().endswith(".ani") for path in cursor_paths):
+        return "ANI 指针"
+    return "系统指针"
+
+
+def theme_supports_physics(theme: CursorTheme) -> bool:
+    """Physical wobble is only available for bundled QMcursor PNG/CUR themes."""
+    return theme_category(theme) == QM_CUSTOM_CATEGORY
+
 
 class MainWindow(QMainWindow):
     def __init__(
@@ -69,6 +87,7 @@ class MainWindow(QMainWindow):
         self._updating_autostart = False
         self._updating_physics = False
         self._force_quit = False
+        self._physics_tree_item: QTreeWidgetItem | None = None
         self._background_handoff: Callable[[], None] | None = None
 
         self.setWindowTitle("QMcursor 鼠标指针")
@@ -124,13 +143,16 @@ class MainWindow(QMainWindow):
         self.autostart_checkbox.toggled.connect(self._toggle_autostart)
 
         self.physics_checkbox = QCheckBox("启用物理摇摆（实验）")
-        self.physics_checkbox.setToolTip(
+        self._physics_default_tooltip = (
             "用叠加层绘制当前主题指针，随移动软跟随、摇摆，并按用途自动换图"
             "（文本选择、链接等）。若主题含 pendant.png，会在指针下方挂坠摇摆。"
             "需要自制主题 PNG（如伊雷娜）。启用后关闭窗口会缩到托盘继续运行；"
             "请从托盘图标选择「退出」才会停止。"
         )
+        self.physics_checkbox.setToolTip(self._physics_default_tooltip)
+        self.physics_checkbox.setStyleSheet("background: transparent;")
         self.physics_checkbox.toggled.connect(self._toggle_physics)
+        self.physics_checkbox.hide()
 
         self.size_slider = QSlider(Qt.Horizontal)
         size_level_count = (
@@ -166,8 +188,17 @@ class MainWindow(QMainWindow):
         self.restore_button = QPushButton("恢复首次备份")
         self.restore_button.clicked.connect(self._restore_backup)
 
+        self.import_button = QPushButton("导入 ANI 包")
+        import_menu = QMenu(self.import_button)
+        import_zip_action = import_menu.addAction("从 ZIP 压缩包导入…")
+        import_zip_action.triggered.connect(self._import_ani_zip)
+        import_directory_action = import_menu.addAction("从文件夹导入…")
+        import_directory_action.triggered.connect(self._import_ani_directory)
+        self.import_button.setMenu(import_menu)
+
         actions = QHBoxLayout()
         actions.addWidget(self.status_label, 1)
+        actions.addWidget(self.import_button)
         actions.addWidget(self.restore_button)
         actions.addWidget(self.apply_button)
 
@@ -177,7 +208,6 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(splitter, 1)
         root_layout.addLayout(size_controls)
         root_layout.addWidget(self.autostart_checkbox)
-        root_layout.addWidget(self.physics_checkbox)
         root_layout.addLayout(actions)
         self.setCentralWidget(root)
 
@@ -241,9 +271,22 @@ class MainWindow(QMainWindow):
 
     def _update_size_label(self, level: int) -> None:
         size = CURSOR_SIZE_MIN + (level - 1) * CURSOR_SIZE_STEP
-        self.size_value_label.setText(f"{size} px")
+        theme = self._selected_theme()
+        selected_size = (
+            theme.nearest_size(size)
+            if theme is not None and theme.is_animated
+            else None
+        )
+        suffix = f" → {selected_size} px ANI" if selected_size is not None else ""
+        self.size_value_label.setText(f"{size} px{suffix}")
+        self.size_value_label.setMinimumWidth(72 if selected_size is None else 150)
         self.size_value_label.setToolTip(
             f"大小等级 {level} / {self.size_slider.maximum()}"
+            + (
+                f"；应用该主题时使用最接近的 {selected_size} px ANI 资源"
+                if selected_size is not None
+                else ""
+            )
         )
 
     def _load_themes(self) -> None:
@@ -253,13 +296,19 @@ class MainWindow(QMainWindow):
             self._show_error("读取指针方案失败", str(exc))
             self.themes = []
 
+        self._detach_physics_checkbox()
         self.theme_list.clear()
         theme_items: dict[int, QTreeWidgetItem] = {}
-        for category, is_custom in (("系统指针", False), ("自制指针", True)):
+        categories = (
+            ("系统指针", False),
+            (QM_CUSTOM_CATEGORY, True),
+            ("ANI 指针", True),
+        )
+        for category, expanded in categories:
             category_themes = [
                 (index, theme)
                 for index, theme in enumerate(self.themes)
-                if theme.is_custom is is_custom
+                if theme_category(theme) == category
             ]
             if not category_themes:
                 continue
@@ -269,10 +318,14 @@ class MainWindow(QMainWindow):
             header_font = header_item.font(0)
             header_font.setBold(True)
             header_item.setFont(0, header_font)
-            header_item.setExpanded(is_custom)
+            header_item.setExpanded(expanded)
+            if category == QM_CUSTOM_CATEGORY:
+                self._attach_physics_checkbox(header_item)
 
             for index, theme in category_themes:
                 display_name = friendly_theme_name(theme.name)
+                if theme.is_animated:
+                    display_name += "（系统动画）"
                 item = QTreeWidgetItem(header_item, [display_name])
                 item.setData(0, Qt.UserRole, index)
                 item.setToolTip(0, f"方案名称：{theme.name}")
@@ -308,12 +361,17 @@ class MainWindow(QMainWindow):
         theme_index = current.data(0, Qt.UserRole) if current else None
         if not isinstance(theme_index, int) or not 0 <= theme_index < len(self.themes):
             self.details.setRowCount(0)
+            self._update_physics_controls(None)
             return
 
         theme = self.themes[theme_index]
+        preview_size = CURSOR_SIZE_MIN + (
+            self.size_slider.value() - 1
+        ) * CURSOR_SIZE_STEP
+        preview_cursors = theme.resolved_cursors(preview_size)
         self.details.setRowCount(len(CURSOR_ROLES))
         for index, role in enumerate(CURSOR_ROLES):
-            path = theme.cursors[role]
+            path = preview_cursors[role]
             display_path = Path(path).name if path else "Windows 默认"
             role_item = QTableWidgetItem(ROLE_LABELS[role])
             path_item = QTableWidgetItem(display_path)
@@ -322,6 +380,8 @@ class MainWindow(QMainWindow):
             self.details.setCellWidget(index, 1, CursorPreview(role, path))
             self.details.setItem(index, 2, path_item)
             self.details.setRowHeight(index, 52)
+        self._update_physics_controls(theme)
+        self._update_size_label(self.size_slider.value())
 
     def _apply_selected_theme(self) -> None:
         current = self.theme_list.currentItem()
@@ -330,6 +390,11 @@ class MainWindow(QMainWindow):
             return
 
         theme = self.themes[theme_index]
+        if theme.is_animated and self.physics_service.is_running:
+            self.physics_service.stop()
+            self.physics_service.save_enabled(False)
+            self._set_physics_checked(False)
+            self._sync_tray_visibility()
         self.apply_button.setEnabled(False)
         try:
             self.cursor_service.apply_theme(theme)
@@ -355,7 +420,13 @@ class MainWindow(QMainWindow):
                 self.apply_button.setEnabled(True)
                 return
 
-        self.status_label.setText(f"已应用：{friendly_theme_name(theme.name)}")
+        if theme.is_animated:
+            self.status_label.setText(
+                f"已应用：{friendly_theme_name(theme.name)}"
+                "（Windows 系统动画，可退出 QMcursor）"
+            )
+        else:
+            self.status_label.setText(f"已应用：{friendly_theme_name(theme.name)}")
         self.apply_button.setEnabled(True)
 
     def _apply_cursor_size(self) -> None:
@@ -365,6 +436,9 @@ class MainWindow(QMainWindow):
         self.apply_size_button.setEnabled(False)
         try:
             self.cursor_service.set_cursor_size(size)
+            selected_theme = self.cursor_service.load_selected_theme()
+            if selected_theme is not None and selected_theme.sizes:
+                self.cursor_service.apply_theme(selected_theme, remember=False)
             if self.physics_service.is_running:
                 self.physics_service.sync_size(size)
         except (CursorServiceError, ValueError, PhysicsCursorError) as exc:
@@ -374,7 +448,18 @@ class MainWindow(QMainWindow):
             self.status_label.setText("调整指针大小失败")
             self._refresh_cursor_size()
         else:
-            self.status_label.setText(f"指针大小已调整为 {size} px")
+            selected_theme = self.cursor_service.load_selected_theme()
+            asset_size = (
+                selected_theme.nearest_size(size)
+                if selected_theme is not None and selected_theme.is_animated
+                else None
+            )
+            if asset_size is None:
+                self.status_label.setText(f"指针大小已调整为 {size} px")
+            else:
+                self.status_label.setText(
+                    f"指针大小已调整为 {size} px，已应用 {asset_size} px ANI"
+                )
         finally:
             self.apply_size_button.setEnabled(True)
 
@@ -454,6 +539,53 @@ class MainWindow(QMainWindow):
         )
         self._sync_tray_visibility()
 
+    def _import_ani_zip(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "选择 ANI 主题压缩包",
+            "",
+            "ZIP 压缩包 (*.zip)",
+        )
+        if path:
+            self._import_ani_path(Path(path))
+
+    def _import_ani_directory(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "选择 ANI 主题文件夹")
+        if path:
+            self._import_ani_path(Path(path))
+
+    def _import_ani_path(self, path: Path) -> None:
+        self.import_button.setEnabled(False)
+        try:
+            imported = self.cursor_service.import_ani_pack(path)
+            self._load_themes()
+            for index, theme in enumerate(self.themes):
+                if theme.name.casefold() != imported.name.casefold():
+                    continue
+                item = self._theme_item_for_index(index)
+                if item is not None:
+                    self.theme_list.setCurrentItem(item)
+                break
+        except CursorServiceError as exc:
+            self._show_error("导入 ANI 包失败", str(exc))
+            self.status_label.setText("ANI 主题导入失败")
+        else:
+            self.status_label.setText(
+                f"已导入：{friendly_theme_name(imported.name)}（尚未应用）"
+            )
+        finally:
+            self.import_button.setEnabled(True)
+
+    def _theme_item_for_index(self, theme_index: int) -> QTreeWidgetItem | None:
+        root = self.theme_list.invisibleRootItem()
+        for category_index in range(root.childCount()):
+            category = root.child(category_index)
+            for item_index in range(category.childCount()):
+                item = category.child(item_index)
+                if item.data(0, Qt.UserRole) == theme_index:
+                    return item
+        return None
+
     def _restore_physics_preference(self) -> None:
         if not self.physics_service.load_enabled():
             return
@@ -492,20 +624,73 @@ class MainWindow(QMainWindow):
         theme_index = current.data(0, Qt.UserRole) if current else None
         if isinstance(theme_index, int) and 0 <= theme_index < len(self.themes):
             candidate = self.themes[theme_index]
-            if self._theme_has_arrow_png(candidate):
+            if theme_supports_physics(candidate) and self._theme_has_arrow_png(
+                candidate
+            ):
                 return candidate
 
         selected = self.cursor_service.load_selected_theme()
-        if selected is not None and self._theme_has_arrow_png(selected):
+        if (
+            selected is not None
+            and theme_supports_physics(selected)
+            and self._theme_has_arrow_png(selected)
+        ):
             return selected
 
         try:
             active = self.cursor_service.current_theme()
         except OSError:
             return None
-        if self._theme_has_arrow_png(active):
+        if theme_supports_physics(active) and self._theme_has_arrow_png(active):
+            return active
+        # Applying a custom theme rewrites the Windows scheme without is_custom.
+        if not active.is_animated and self._theme_has_arrow_png(active):
             return active
         return None
+
+    def _selected_theme(self) -> CursorTheme | None:
+        current = self.theme_list.currentItem()
+        theme_index = current.data(0, Qt.UserRole) if current else None
+        if isinstance(theme_index, int) and 0 <= theme_index < len(self.themes):
+            return self.themes[theme_index]
+        return None
+
+    def _attach_physics_checkbox(self, category_item: QTreeWidgetItem) -> None:
+        item = QTreeWidgetItem()
+        item.setFlags(Qt.ItemIsEnabled)
+        category_item.insertChild(0, item)
+        item.setSizeHint(0, self.physics_checkbox.sizeHint())
+        self.theme_list.setItemWidget(item, 0, self.physics_checkbox)
+        self._physics_tree_item = item
+        self.physics_checkbox.show()
+
+    def _detach_physics_checkbox(self) -> None:
+        if self._physics_tree_item is not None:
+            self.theme_list.removeItemWidget(self._physics_tree_item, 0)
+            self._physics_tree_item = None
+        self.physics_checkbox.setParent(self)
+        self.physics_checkbox.hide()
+
+    def _update_physics_controls(self, theme: CursorTheme | None) -> None:
+        supported = theme is not None and theme_supports_physics(theme)
+        if theme is not None and theme.is_animated and self.physics_service.is_running:
+            self.physics_service.stop()
+            self.physics_service.save_enabled(False)
+            self._set_physics_checked(False)
+            self._sync_tray_visibility()
+        self.physics_checkbox.setEnabled(supported)
+        if supported:
+            self.physics_checkbox.setToolTip(self._physics_default_tooltip)
+        elif theme is not None and theme.is_animated:
+            self.physics_checkbox.setToolTip(
+                "该主题由 Windows 原生播放 ANI，关闭 QMcursor 后仍会动画；"
+                "它与需要托盘常驻的物理摇摆不能同时启用。"
+            )
+        else:
+            self.physics_checkbox.setToolTip(
+                "物理摇摆仅适用于「QMcursor 自制指针」。"
+                "请先选择该分类下的主题后再启用。"
+            )
 
     @staticmethod
     def _theme_has_arrow_png(theme: CursorTheme) -> bool:
@@ -570,6 +755,7 @@ class MainWindow(QMainWindow):
     def _unload_heavy_ui(self) -> None:
         """Drop theme list / previews so tray-resident mode holds less RAM."""
         self.details.setRowCount(0)
+        self._detach_physics_checkbox()
         self.theme_list.clear()
         self.themes.clear()
         app = QApplication.instance()

@@ -5,8 +5,14 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import re
+import shutil
+import struct
+import tempfile
 import winreg
+import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Iterable
 
 from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
@@ -25,6 +31,63 @@ CURSOR_SIZE_MIN = 32
 CURSOR_SIZE_MAX = 256
 CURSOR_SIZE_STEP = 8
 MANAGED_VALUE_NAMES = ("", *CURSOR_ROLES, "Scheme Source", CURSOR_SIZE_VALUE)
+MAX_ANI_IMPORT_BYTES = 64 * 1024 * 1024
+ANI_ROLE_STEMS = {
+    "normal": "Arrow",
+    "arrow": "Arrow",
+    "help": "Help",
+    "working": "AppStarting",
+    "appstarting": "AppStarting",
+    "app_starting": "AppStarting",
+    "busy": "Wait",
+    "wait": "Wait",
+    "precision": "Crosshair",
+    "crosshair": "Crosshair",
+    "text": "IBeam",
+    "ibeam": "IBeam",
+    "handwriting": "NWPen",
+    "nwpen": "NWPen",
+    "pen": "NWPen",
+    "unavailable": "No",
+    "no": "No",
+    "vertical": "SizeNS",
+    "sizens": "SizeNS",
+    "size_ns": "SizeNS",
+    "horizontal": "SizeWE",
+    "sizewe": "SizeWE",
+    "size_we": "SizeWE",
+    "diagonal1": "SizeNWSE",
+    "sizenwse": "SizeNWSE",
+    "size_nwse": "SizeNWSE",
+    "diagonal2": "SizeNESW",
+    "sizenesw": "SizeNESW",
+    "size_nesw": "SizeNESW",
+    "move": "SizeAll",
+    "sizeall": "SizeAll",
+    "size_all": "SizeAll",
+    "alternate": "UpArrow",
+    "uparrow": "UpArrow",
+    "up_arrow": "UpArrow",
+    "link": "Hand",
+    "hand": "Hand",
+}
+ROLE_OUTPUT_NAMES = {
+    "Arrow": "arrow.ani",
+    "Help": "help.ani",
+    "AppStarting": "app_starting.ani",
+    "Wait": "wait.ani",
+    "Crosshair": "crosshair.ani",
+    "IBeam": "ibeam.ani",
+    "NWPen": "pen.ani",
+    "No": "no.ani",
+    "SizeNS": "size_ns.ani",
+    "SizeWE": "size_we.ani",
+    "SizeNWSE": "size_nwse.ani",
+    "SizeNESW": "size_nesw.ani",
+    "SizeAll": "size_all.ani",
+    "UpArrow": "up_arrow.ani",
+    "Hand": "hand.ani",
+}
 
 
 class CursorServiceError(RuntimeError):
@@ -42,6 +105,7 @@ class CursorService:
         self.data_dir = Path(data_dir) if data_dir else default_dir
         self.backup_path = self.data_dir / "backup.json"
         self.state_path = self.data_dir / "state.json"
+        self.imported_themes_dir = self.data_dir / "imported"
 
     @staticmethod
     def expand_cursor_path(path: str) -> str:
@@ -72,6 +136,8 @@ class CursorService:
 
         for theme in self.list_bundled_themes():
             themes[theme.name.casefold()] = theme
+        for theme in self.list_imported_themes():
+            themes[theme.name.casefold()] = theme
 
         if not themes:
             current = self.current_theme()
@@ -84,6 +150,14 @@ class CursorService:
         themes_dir: Path = BUNDLED_THEMES_DIR,
     ) -> list[CursorTheme]:
         """Load valid theme manifests shipped inside the application."""
+        return CursorService._list_manifest_themes(themes_dir)
+
+    def list_imported_themes(self) -> list[CursorTheme]:
+        """Load valid themes previously imported into the user data directory."""
+        return self._list_manifest_themes(self.imported_themes_dir)
+
+    @staticmethod
+    def _list_manifest_themes(themes_dir: Path) -> list[CursorTheme]:
         themes: list[CursorTheme] = []
         if not themes_dir.is_dir():
             return themes
@@ -95,21 +169,255 @@ class CursorService:
                 if not isinstance(cursor_values, dict):
                     continue
                 cursors = {
-                    str(role): str((manifest.parent / str(path)).resolve())
+                    str(role): CursorService._resolve_manifest_path(
+                        manifest.parent, str(path)
+                    )
                     for role, path in cursor_values.items()
                     if path
                 }
+                raw_sizes = payload.get("sizes")
+                sizes = None
+                if isinstance(raw_sizes, dict):
+                    sizes = {
+                        int(size): {
+                            str(role): CursorService._resolve_manifest_path(
+                                manifest.parent, str(path)
+                            )
+                            for role, path in values.items()
+                            if path
+                        }
+                        for size, values in raw_sizes.items()
+                        if isinstance(values, dict)
+                    }
                 theme = CursorTheme(
                     name=str(payload["name"]),
                     cursors=cursors,
                     source=int(payload.get("source", 1)),
                     is_custom=True,
+                    kind=str(payload.get("kind", "cur")),
+                    sizes=sizes,
+                    frame_interval_ms=payload.get("frame_interval_ms"),
                 )
             except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
                 continue
-            if not theme.missing_files():
+            checked_sizes: Iterable[int | None] = (
+                theme.sizes if theme.sizes else (None,)
+            )
+            if all(not theme.missing_files(size) for size in checked_sizes):
                 themes.append(theme)
         return themes
+
+    @staticmethod
+    def _resolve_manifest_path(theme_dir: Path, value: str) -> str:
+        path = Path(value)
+        return str(path.resolve() if path.is_absolute() else (theme_dir / path).resolve())
+
+    def import_ani_pack(self, source: Path | str) -> CursorTheme:
+        """Import a directory or ZIP containing conventionally named ANI files."""
+        source_path = Path(source)
+        if not source_path.exists():
+            raise CursorServiceError(f"导入来源不存在：{source_path}")
+
+        try:
+            files = self._read_ani_pack_files(source_path)
+            inf_bytes = next(
+                (data for name, data in files.items() if name.casefold().endswith(".inf")),
+                None,
+            )
+            display_name = self._theme_name_from_inf(inf_bytes) or source_path.stem
+            display_name = display_name.strip() or "导入的动画指针"
+            display_name = self._available_import_name(display_name)
+
+            role_data: dict[str, bytes] = {}
+            for name, data in files.items():
+                if not name.casefold().endswith(".ani"):
+                    continue
+                role = ANI_ROLE_STEMS.get(Path(name).stem.casefold())
+                if role is None:
+                    continue
+                if role in role_data:
+                    raise CursorServiceError(f"导入包中角色文件重复：{role}")
+                if not self._is_valid_ani(data):
+                    raise CursorServiceError(f"不是有效的 ANI 文件：{name}")
+                role_data[role] = data
+
+            if not role_data:
+                raise CursorServiceError(
+                    "未找到可识别的 ANI 文件。请使用 Normal/Busy 等标准文件名。"
+                )
+
+            self.imported_themes_dir.mkdir(parents=True, exist_ok=True)
+            folder_name = self._available_import_folder(display_name)
+            target = self.imported_themes_dir / folder_name
+            temporary = Path(
+                tempfile.mkdtemp(prefix=f".{folder_name}-", dir=self.imported_themes_dir)
+            )
+            try:
+                cursor_values: dict[str, str] = {}
+                for role, data in role_data.items():
+                    output_name = ROLE_OUTPUT_NAMES[role]
+                    (temporary / output_name).write_bytes(data)
+                    cursor_values[role] = output_name
+                manifest = {
+                    "name": display_name,
+                    "source": 1,
+                    "is_custom": True,
+                    "kind": "ani",
+                    "cursors": cursor_values,
+                }
+                (temporary / "theme.json").write_text(
+                    json.dumps(manifest, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                temporary.replace(target)
+            except Exception:
+                shutil.rmtree(temporary, ignore_errors=True)
+                raise
+        except CursorServiceError:
+            raise
+        except (OSError, ValueError, zipfile.BadZipFile) as exc:
+            raise CursorServiceError(f"导入 ANI 包失败：{exc}") from exc
+
+        return CursorTheme(
+            name=display_name,
+            cursors={
+                role: str((target / ROLE_OUTPUT_NAMES[role]).resolve())
+                for role in role_data
+            },
+            source=1,
+            is_custom=True,
+            kind="ani",
+        )
+
+    @staticmethod
+    def _is_valid_ani(data: bytes) -> bool:
+        if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"ACON":
+            return False
+        riff_end = struct.unpack_from("<I", data, 4)[0] + 8
+        if riff_end > len(data):
+            return False
+
+        has_header = False
+        has_frame = False
+        offset = 12
+        while offset + 8 <= riff_end:
+            chunk_id = data[offset : offset + 4]
+            chunk_size = struct.unpack_from("<I", data, offset + 4)[0]
+            chunk_start = offset + 8
+            chunk_end = chunk_start + chunk_size
+            if chunk_end > riff_end:
+                return False
+            if chunk_id == b"anih" and chunk_size >= 36:
+                has_header = True
+            elif (
+                chunk_id == b"LIST"
+                and chunk_size >= 4
+                and data[chunk_start : chunk_start + 4] == b"fram"
+            ):
+                nested = chunk_start + 4
+                while nested + 8 <= chunk_end:
+                    nested_id = data[nested : nested + 4]
+                    nested_size = struct.unpack_from("<I", data, nested + 4)[0]
+                    nested_end = nested + 8 + nested_size
+                    if nested_end > chunk_end:
+                        return False
+                    if nested_id == b"icon" and nested_size >= 6:
+                        has_frame = True
+                    nested = nested_end + (nested_size % 2)
+            offset = chunk_end + (chunk_size % 2)
+        return has_header and has_frame
+
+    @staticmethod
+    def _read_ani_pack_files(source: Path) -> dict[str, bytes]:
+        files: dict[str, bytes] = {}
+        total_size = 0
+        if source.is_dir():
+            candidates = [
+                path
+                for path in source.rglob("*")
+                if path.is_file() and path.suffix.casefold() in {".ani", ".inf"}
+            ]
+            for path in candidates:
+                size = path.stat().st_size
+                total_size += size
+                if total_size > MAX_ANI_IMPORT_BYTES:
+                    raise CursorServiceError("ANI 导入包过大（上限 64 MB）。")
+                relative_name = path.relative_to(source).as_posix()
+                if relative_name in files:
+                    raise CursorServiceError(f"导入包中存在重复文件：{relative_name}")
+                files[relative_name] = path.read_bytes()
+            return files
+
+        if source.suffix.casefold() != ".zip":
+            raise CursorServiceError("请选择 ANI 文件夹或 ZIP 压缩包。")
+
+        with zipfile.ZipFile(source) as archive:
+            for info in archive.infolist():
+                normalized = info.filename.replace("\\", "/")
+                parts = PurePosixPath(normalized).parts
+                if (
+                    PurePosixPath(normalized).is_absolute()
+                    or ".." in parts
+                    or (parts and ":" in parts[0])
+                ):
+                    raise CursorServiceError("ZIP 中包含不安全的路径。")
+                if info.is_dir():
+                    continue
+                suffix = PurePosixPath(normalized).suffix.casefold()
+                if suffix not in {".ani", ".inf"}:
+                    continue
+                total_size += info.file_size
+                if total_size > MAX_ANI_IMPORT_BYTES:
+                    raise CursorServiceError("ANI 导入包过大（上限 64 MB）。")
+                data = archive.read(info)
+                if len(data) != info.file_size:
+                    raise CursorServiceError(f"ZIP 文件读取不完整：{info.filename}")
+                if normalized in files:
+                    raise CursorServiceError(f"ZIP 中存在重复文件：{normalized}")
+                files[normalized] = data
+        return files
+
+    @staticmethod
+    def _theme_name_from_inf(data: bytes | None) -> str | None:
+        if not data:
+            return None
+        encodings = (
+            ("utf-16",) if data.startswith((b"\xff\xfe", b"\xfe\xff")) else ()
+        ) + ("utf-8-sig", "gb18030", "latin-1")
+        for encoding in encodings:
+            try:
+                text = data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+            match = re.search(
+                r'^\s*SCHEME_NAME\s*=\s*"?([^"\r\n]+)',
+                text,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+            if match:
+                return match.group(1).strip()
+        return None
+
+    def _available_import_folder(self, display_name: str) -> str:
+        base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", display_name).strip(" .")
+        base = base[:80] or "ani-theme"
+        candidate = base
+        index = 2
+        while (self.imported_themes_dir / candidate).exists():
+            candidate = f"{base}-{index}"
+            index += 1
+        return candidate
+
+    def _available_import_name(self, display_name: str) -> str:
+        existing = {
+            theme.name.casefold() for theme in self.list_imported_themes()
+        }
+        if display_name.casefold() not in existing:
+            return display_name
+        index = 2
+        while f"{display_name} ({index})".casefold() in existing:
+            index += 1
+        return f"{display_name} ({index})"
 
     def current_theme(self) -> CursorTheme:
         snapshot = self._read_managed_values()
@@ -124,13 +432,16 @@ class CursorService:
         return CursorTheme(name=name, cursors=cursors, source=source)
 
     def apply_theme(self, theme: CursorTheme, *, remember: bool = True) -> None:
-        missing = theme.missing_files()
+        cursor_size = self.current_cursor_size()
+        cursors = theme.resolved_cursors(cursor_size)
+        missing = theme.missing_files(cursor_size)
         if missing:
             names = "\n".join(str(path) for path in missing[:5])
             raise CursorServiceError(f"以下指针文件不存在：\n{names}")
 
         self.ensure_initial_backup()
         before = self._read_managed_values()
+        previous_scheme = self._read_user_scheme(theme.name)
 
         try:
             with winreg.CreateKeyEx(
@@ -144,16 +455,24 @@ class CursorService:
                     key, "Scheme Source", 0, winreg.REG_DWORD, theme.source
                 )
                 for role in CURSOR_ROLES:
-                    path = theme.cursors[role]
+                    path = cursors[role]
                     value_type = (
                         winreg.REG_EXPAND_SZ if "%" in path else winreg.REG_SZ
                     )
                     winreg.SetValueEx(key, role, 0, value_type, path)
 
+            self._write_user_scheme(theme.name, cursors)
             self._reload_system_cursors()
         except Exception as exc:
             try:
                 self._restore_managed_values(before)
+            except Exception:
+                pass
+            try:
+                self._restore_user_scheme(theme.name, previous_scheme)
+            except Exception:
+                pass
+            try:
                 self._reload_system_cursors()
             except Exception:
                 pass
@@ -161,6 +480,49 @@ class CursorService:
 
         if remember:
             self.save_selected_theme(theme)
+
+    @staticmethod
+    def _read_user_scheme(name: str) -> tuple[str, int] | None:
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                USER_SCHEMES_KEY,
+                0,
+                winreg.KEY_QUERY_VALUE,
+            ) as key:
+                value, value_type = winreg.QueryValueEx(key, name)
+            return str(value), int(value_type)
+        except FileNotFoundError:
+            return None
+
+    @staticmethod
+    def _write_user_scheme(name: str, cursors: dict[str, str]) -> None:
+        value = ",".join(cursors[role] for role in CURSOR_ROLES)
+        value_type = winreg.REG_EXPAND_SZ if "%" in value else winreg.REG_SZ
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER,
+            USER_SCHEMES_KEY,
+            0,
+            winreg.KEY_SET_VALUE,
+        ) as key:
+            winreg.SetValueEx(key, name, 0, value_type, value)
+
+    @staticmethod
+    def _restore_user_scheme(name: str, previous: tuple[str, int] | None) -> None:
+        with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER,
+            USER_SCHEMES_KEY,
+            0,
+            winreg.KEY_SET_VALUE,
+        ) as key:
+            if previous is None:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+            else:
+                value, value_type = previous
+                winreg.SetValueEx(key, name, 0, value_type, value)
 
     @staticmethod
     def current_cursor_size() -> int:

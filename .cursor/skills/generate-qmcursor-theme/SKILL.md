@@ -1,130 +1,175 @@
 ---
-name: generate-qmcursor-theme
-description: 根据参考图片提炼视觉风格，生成 15 张 Windows 标准鼠标指针 PNG，转换为多分辨率 CUR 并作为完整主题集成到 QMcursor/ArkCursor。用户提到生成指针、参考图制作光标、创建鼠标主题或融入 QMcursor 时使用。
+name: generate-ani-cursor-theme
+description: 按 Mon3tr 与魔理沙光标的形态分布、硬边像素和动画节奏，生成 17 角色、48×48、8 位、8 帧 Windows 原生 ANI 光标包。用户提到生成动态光标、ANI 指针、Mon3tr 风格、魔理沙光标风格或角色像素光标时使用。
 ---
 
-# 生成 QMcursor 指针主题
+# 生成 Mon3tr / 魔理沙式 ANI 光标
 
-完成从参考图到可用主题的全流程。不得只生成图片或只写 `theme.json`。
+完成从角色参考图到可导入 QMcursor 的 17 角色 ANI 包。不得生成旧式 15 PNG / 多层 CUR 主题。
 
-## 输入约定
+## 唯一规范
 
-- 项目根目录是包含 `pyproject.toml` 和 `src/arkcursor/` 的目录。
-- 生图规范默认读取项目根目录的 `doc/通用鼠标指针生图提示词.md`。
-- 转换规范默认读取项目根目录的 `doc/生成指针prompt.txt`。
-- 用户提供的工作文件夹应包含 4–5 张参考图片；15 张生成图和 `style-summary.md` 也必须保存到该文件夹。
-- 若用户未给工作文件夹，搜索项目中除 `.venv`、`.git`、`src/arkcursor/themes` 外含 4–5 张图片的文件夹。只有不存在或候选多于一个时才询问。
-- 从参考图主题或文件夹名推断中文主题名和安全的英文小写目录名；无法可靠推断时一次询问两者。
+开始前完整读取：
+
+1. `doc/Mon3tr魔理沙风格ANI光标生成提示词.md`
+2. `doc/ANI动态鼠标指针制作标准流程.md`
+
+若两者有差异，以第一份文件的 48×48、8 位、每角色 8 帧要求为准。
+
+不得寻找、恢复或使用已经删除的旧静态 CUR 提示词与旧 Skill。
+
+## 输入
+
+- 项目根目录包含 `pyproject.toml` 与 `src/arkcursor/`。
+- 用户提供主题工作目录；目录中应有 4–6 张角色参考图。
+- 从文件夹名和参考图推断中文主题名；无法判断时只询问一次。
+- 使用本地 Mon3tr、魔理沙 ANI 抽帧作为构图与动画基准，不复制其角色像素。
+
+## 固定输出
+
+- 17 个角色。
+- 每角色 8 张 48×48 RGBA PNG。
+- Alpha 仅 0/255，1px 硬描边，固定调色板。
+- 17 个 48×48、8 位 ANI。
+- `JifRate=6`，约 100ms/帧。
+- `style-summary.md`、`hotspots.json`、`build_assets.py`、`source/`、`preview/`、`package/`。
 
 ## 工作流
 
-### 1. 读取并分析
+### 1. 分析角色与基准
 
-1. 完整读取两份规范文件，不要用本 Skill 的摘要替代原文。
-2. 读取工作文件夹内全部参考图片。生成图若已存在，不得误当成原始参考图。
-3. 用 3–6 条总结共同视觉规范：主/辅/强调/轮廓色、轮廓与圆角、明暗和材质、核心造型语言。
-4. 将总结写入工作文件夹的 `style-summary.md`。
-5. 选择参考图色板中没有的高饱和纯色作为临时背景，记录精确十六进制色值。不得要求生图模型直接生成透明背景、棋盘格或透明预览。
-6. 造型不得拘泥于系统指针常见的三角形箭头，也不得只给默认箭头换色或添加装饰。优先用参考图中的动物、植物、器物、纹样或抽象元素直接重构指针主体；允许完全脱离传统箭头轮廓，但必须保留清晰的功能方向、操作含义、准确热点及 24/32 px 识别度。
-7. 没有脸的话，就不要光花个头发，很丑。只要造型中出现角色头部或大面积发型，就必须同时绘制完整、协调且清晰的脸；若不准备画脸，则完全不要使用孤立头发、后脑勺或无脸头像轮廓，改用服饰、器物、动物特征、纹样或抽象元素。
-8. 指针的操作尖端必须锐利、明确，不得做成圆头、平头或被装饰遮挡，以便用户准确定位和点击。
-9. 有想象力一点，不要help就放个问号，work就放个圈圈。这样子表现和阿米娅没有任何关联。要有特色。
-10. 有特色，有创意，但是要让人看懂这是help，或者这是work，基本的信息要表达出来。
+1. 读取全部原始参考图；不得把旧生成图当原始参考。
+2. 解码或读取 Mon3tr、魔理沙成品帧，记录：
+   - 角色态与功能态的分工。
+   - 主体占比、热点位置和负空间。
+   - 1px 轮廓、色数、像素密度。
+   - 哪些角色真正运动，哪些角色复用静态帧。
+3. 写 `style-summary.md`：
+   - 20–30 色固定色板。
+   - 3–5 个角色识别元素。
+   - 普通选择的热点器物与人物位置。
+   - 可动部件和动作节奏。
 
-### 2. 逐张生成 15 个 PNG
+### 2. 只生成普通选择关键帧
 
-必须调用图像生成工具生成独立的 1:1 图片，推荐 1024×1024。把全部原始参考图放入每次调用的 `reference_image_paths`。
+1. 使用新 Prompt 的“普通选择关键帧生图 Prompt”。
+2. 必须调用图像生成工具，`reference_image_paths` 包含：
+   - 全部角色参考图。
+   - Mon3tr / 魔理沙关键帧参考。
+3. 生图描述必须包含：
+   - 按逻辑 48×48 像素格设计并最近邻放大。
+   - 角色与功能尖端一体化。
+   - 禁止独立默认箭头加缩小立绘。
+   - 纯色临时背景，主体不使用背景色。
+4. 将概念图压回 48×48，清理成固定色板和硬 Alpha。
+5. 检查：
+   - 功能尖端清楚且可作为热点。
+   - 脸与双眼完整对称。
+   - 角色和道具不粘成无法辨认的色团。
+   - 原生 48px 下可读。
+6. 生成原尺寸和最近邻放大预览，展示给用户确认。
+7. 未确认前禁止制作其余角色。
 
-先只生成 `01-normal-select.png`，读取成图并检查指向左上的方向感、左上热点、安全边距和 24/32 px 识别度。不要求主体呈系统三角箭头形；若成图只是默认箭头加装饰，应重生为由主题元素直接构成的创意造型。检查通过后必须向用户展示第一张 PNG，并询问是否通过；在用户明确选择通过前必须暂停，禁止生成 `02`–`15`。若用户不通过，按反馈重生 `01-normal-select.png`，再次检查并询问，直到用户明确通过。确认后，后续每次调用同时引用全部原始参考图和已确认的 `01-normal-select.png`。
+### 3. 制作 Normal 八帧
 
-后续必须按顺序逐张生成，前一张检查通过后再生成下一张，禁止并行生成或生成 5×3 拼图：
+1. 将关键帧拆成头、眼、嘴、耳朵/帽子、头发/尾巴、身体、衣摆、道具、粒子等像素层。
+2. 用逐像素编辑或主题专用 `build_assets.py` 制作 8 帧。
+3. 热点尖端保持绝对静止；其他部件围绕热点呼吸、眨眼或轻动。
+4. 禁止对 8 帧分别调用生图工具。
+5. 输出 `preview/01-normal-select.gif` 和帧表，检查首尾循环。
 
-1. `01-normal-select.png`
-2. `02-help-select.png`
-3. `03-working-in-background.png`
-4. `04-busy.png`
-5. `05-precision-select.png`
-6. `06-text-select.png`
-7. `07-handwriting.png`
-8. `08-unavailable.png`
-9. `09-vertical-resize.png`
-10. `10-horizontal-resize.png`
-11. `11-diagonal-resize-nwse.png`
-12. `12-diagonal-resize-nesw.png`
-13. `13-move.png`
-14. `14-alternate-select.png`
-15. `15-link-select.png`
+### 4. 制作其余十六个角色
 
-每次图像描述都要包含：
+按新 Prompt 的角色表执行。
 
-- 规范文件中该角色的完整功能、方向、几何和热点要求。
-- 本次提炼出的视觉规范。
-- “不要拘泥于系统三角形箭头，不要只装饰默认箭头；优先让主题元素直接构成具有明确功能方向和热点的创意指针主体。”
-- 规范文件“四、每张图片都必须附加的强制要求”。
-- “背景为纯色 `<色值>`，完全平坦、单色、无渐变、无纹理、无阴影、无光晕；主体不得使用该颜色。”
-- “只生成这一枚指针，不要拼图、文字、编号或标签。”
+角色态应有有效动画：
 
-工具若先把图片写到默认目录，立即移动到工作文件夹并使用严格文件名。不要覆盖用户原有同名文件；存在时先确认它是否是本次可复用成图，否则询问是否重生。
+- Help
+- Working
+- Unavailable
+- Link
+- Pin
+- Person
 
-### 3. 视觉校验
+功能态：
 
-每张生成后读取图片并与 `01-normal-select.png` 比较：
+- Busy 使用主题核心做 8 帧循环。
+- Precision 只做轻微中心脉冲。
+- Text、Handwriting、四种 Resize、Move、Alternate 可将静态帧复用 8 次。
 
-- 角色、方向和对称性正确，热点尖端或中心明确且无遮挡。
-- 色板、线宽、圆角、光照、材质、主体占比和边距一致。
-- 无文字、水印、场景、额外物体、裁切或临时背景上的阴影。
+每个角色完成后先检查方向、热点、色板和 48px 可读性，再继续下一个。
 
-任何一项明显失败都重生该张，不要把偏差带到后续图片。
+### 5. 写热点配置
 
-### 4. 转换并集成
+在工作目录写 `hotspots.json`：
 
-转换脚本依赖 Pillow。优先使用项目虚拟环境；缺少依赖时执行：
-
-```powershell
-python -m pip install Pillow
+```json
+{
+  "01-normal-select": [2, 5],
+  "02-help-select": [2, 5],
+  "03-working-in-background": [2, 5],
+  "04-busy": [24, 24],
+  "05-precision-select": [24, 24],
+  "06-text-select": [23, 24],
+  "07-handwriting": [7, 41],
+  "08-unavailable": [5, 5],
+  "09-vertical-resize": [24, 24],
+  "10-horizontal-resize": [24, 24],
+  "11-diagonal-resize-nwse": [24, 24],
+  "12-diagonal-resize-nesw": [24, 24],
+  "13-move": [24, 24],
+  "14-alternate-select": [24, 5],
+  "15-link-select": [4, 7],
+  "16-location-select": [4, 7],
+  "17-person-select": [4, 7]
+}
 ```
+
+坐标必须按实际可见尖端修正；示例不是无条件固定值。
+
+### 6. 构建 ANI
 
 从项目根目录执行：
 
 ```powershell
-python .cursor/skills/generate-qmcursor-theme/scripts/build_cursor_theme.py `
-  --input "<工作文件夹>" `
-  --theme-name "<中文主题名>" `
-  --theme-dir "<英文目录名>" `
-  --background "<临时背景色值>"
+python .cursor/skills/generate-qmcursor-theme/scripts/build_ani_theme.py `
+  --input "<工作目录>/source" `
+  --output "<工作目录>/package" `
+  --size 48 `
+  --jif-rate 6 `
+  --indexed-8bit `
+  --hotspots "<工作目录>/hotspots.json"
 ```
 
-脚本会：
+在 `package/theme.inf` 写入：
 
-- 严格读取上述 15 个 PNG，也兼容用户明确提供的单张 5×3 合集。
-- 从画布边缘连通区域抠除临时纯色，清理边缘溢色并保留 RGBA。
-- 保留裁剪后的透明 PNG。
-- 生成 32、48、64、96、128、192、256 px 的 32 位未压缩 RGBA CUR。
-- 按角色设置热点，并写入 `src/arkcursor/themes/<英文目录名>/theme.json`。
-- 重新解析全部输出，校验数量、尺寸层、热点、Alpha 和清单引用。
-
-目标主题目录已存在时脚本会拒绝覆盖。只有用户明确要求覆盖时才加 `--force`；这只覆盖同一目标主题，不得删除其他主题。
-
-### 5. 最终验证
-
-1. 读取输出的 15 张 PNG，确认透明背景和小尺寸可识别性；像素校验不能只靠查看器。
-2. 运行脚本的独立校验：
-
-```powershell
-python .cursor/skills/generate-qmcursor-theme/scripts/build_cursor_theme.py `
-  --validate-only "src/arkcursor/themes/<英文目录名>"
+```ini
+[Strings]
+SCHEME_NAME="<中文主题名>"
 ```
 
-3. 运行：
+### 7. 验证
 
-```powershell
-python -m pytest
-python -m compileall -q src tests
-```
+必须验证：
 
-4. 检查新文件的 IDE Lint。项目没有配置独立 Lint 命令时，不要虚构命令。
-5. 确认 `CursorService.list_bundled_themes()` 能加载新主题。无需改主题列表代码：应用会自动扫描 `src/arkcursor/themes/*/theme.json`。
+- 17 个目录 × 8 帧，共 136 张 PNG。
+- 48×48、硬 Alpha、无色键污染、可见色不超过 255。
+- 角色态至少 4 个不同有效帧。
+- 同一角色热点全帧一致。
+- 17 个 ANI 均为 RIFF `ACON`、8 位、8 帧、`JifRate=6`。
+- `LoadCursorFromFileW` 可加载全部 ANI。
+- QMcursor 隔离导入传统 15 角色成功；Pin / Person 保留在包中。
+- `python -m pytest`
+- `python -m compileall -q src tests`
+- 检查新改文件的 IDE Lint。
 
 ## 完成报告
 
-简要报告：主题名、参考图/生成 PNG 所在文件夹、主题输出路径、15 个 CUR 是否均含 7 层、Alpha/热点/清单校验结果、测试结果。开发模式下通常重启 QMcursor 后可看到新主题；若程序正在运行，说明需要重启。
+报告：
+
+- 主题名与工作目录。
+- 普通选择预览。
+- 17 角色、136 帧、17 ANI 是否完整。
+- 位深、帧率、热点、Alpha 与 Windows 加载结果。
+- QMcursor 导入和测试结果。
+- 默认不主动替换用户当前系统指针；用户明确要求后再应用。

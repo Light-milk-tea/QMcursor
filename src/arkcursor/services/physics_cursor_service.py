@@ -205,6 +205,10 @@ class PhysicsCursorService:
         self._write_json(self.state_path, {"version": 1, "enabled": bool(enabled)})
 
     def start(self, theme: CursorTheme, cursor_size: int) -> None:
+        if theme.is_animated:
+            raise PhysicsCursorError(
+                "ANI 主题由 Windows 原生播放，与需要托盘常驻的物理摇摆不能同时启用。"
+            )
         catalog = self._catalog_for_theme(theme, cursor_size)
         if self._overlay is None:
             self._overlay = PhysicsOverlay(catalog, PhysicsConfig())

@@ -14,20 +14,20 @@ description: 为 QMcursor/ArkCursor 已有指针主题生成并安装挂坠（pe
 - 项目根目录含 `pyproject.toml` 与 `src/arkcursor/`。
 - 目标为主题目录：`src/arkcursor/themes/<英文目录名>/`，须已有 `theme.json` 与可用 `arrow.png`。
 - 用户指定主题名/目录；未指定时列出 `src/arkcursor/themes/*/theme.json` 供选择。
-- 生图规范默认读取项目根目录的 `doc/挂坠生图提示词.md`（完整版）。同目录 [prompt.md](prompt.md) 为精简摘录，不得用摘录替代完整规范。
+- 挂坠生图规范只读取同目录 [prompt.md](prompt.md)，不依赖项目 `doc/` 下的旧提示词。
 
 ## 工作流
 
 ### 1. 确认主题与风格
 
-1. 完整阅读 `doc/挂坠生图提示词.md`，不要用本 Skill 摘要替代原文。
+1. 完整阅读同目录 [prompt.md](prompt.md)。
 2. 读取目标主题的 `theme.json`、`arrow.png`，以及用户工作文件夹中的参考图（若有）。
 3. 用 2–4 条总结挂坠应继承的视觉规范：主色/金属色/宝石色、线宽、纹样或器物语言。
 4. 选定临时纯色背景（参考图色板中没有的高饱和色，如 `#FF00FF`），记录精确十六进制值。
 
 ### 2. 生成挂坠原图
 
-1. 使用 `doc/挂坠生图提示词.md` 中的英文主 Prompt，填入 `<BG_HEX>`。
+1. 使用同目录 [prompt.md](prompt.md) 中的英文主 Prompt，填入 `<BG_HEX>`。
 2. 调用图像生成工具：1:1，推荐 1024×1024；`reference_image_paths` 包含全部参考图与该主题 `arrow.png`。
 3. **强制造型约束**（失败则重生）：
    - 只要末端饰物（徽章/宝石/纹样吊坠），竖构图、居中、安全边距。

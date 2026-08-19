@@ -28,6 +28,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 arkcursor = [
+    "themes/*/*.ani",
+    "themes/*/*/*.ani",
     "themes/*/*.cur",
     "themes/*/*.png",
     "themes/*/*.json",
