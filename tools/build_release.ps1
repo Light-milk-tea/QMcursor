@@ -15,7 +15,7 @@ $Spec = Join-Path $Root "QMcursor.spec"
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('src/arkcursor/themes', 'arkcursor/themes')]
+datas = [('src/qmcursor/themes', 'qmcursor/themes')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('PySide6')

@@ -3,13 +3,13 @@ from pathlib import Path
 import pytest
 from PySide6.QtGui import QColor, QGuiApplication, QImage
 
-from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
-from arkcursor.services.physics_cursor_service import (
+from qmcursor.models.theme import CURSOR_ROLES, CursorTheme
+from qmcursor.services.physics_cursor_service import (
     PhysicsCursorError,
     PhysicsCursorService,
     is_shell_cover_band,
 )
-from arkcursor.ui.physics_overlay import (
+from qmcursor.ui.physics_overlay import (
     ensure_overlay_topmost,
     hang_fraction,
     hotspot_fraction,

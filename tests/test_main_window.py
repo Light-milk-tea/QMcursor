@@ -1,5 +1,5 @@
-from arkcursor.models.theme import CursorTheme
-from arkcursor.ui.main_window import theme_category, theme_supports_physics
+from qmcursor.models.theme import CursorTheme
+from qmcursor.ui.main_window import theme_category, theme_supports_physics
 
 
 def test_installed_ani_scheme_uses_ani_category() -> None:

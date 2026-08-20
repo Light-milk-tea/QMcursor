@@ -31,26 +31,26 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from arkcursor.models.theme import (
+from qmcursor.models.theme import (
     CURSOR_ROLES,
     ROLE_LABELS,
     CursorTheme,
     friendly_theme_name,
 )
-from arkcursor.services.autostart_service import AutostartService
-from arkcursor.services.cursor_service import (
+from qmcursor.services.autostart_service import AutostartService
+from qmcursor.services.cursor_service import (
     CURSOR_SIZE_MAX,
     CURSOR_SIZE_MIN,
     CURSOR_SIZE_STEP,
     CursorService,
     CursorServiceError,
 )
-from arkcursor.services.physics_cursor_service import (
+from qmcursor.services.physics_cursor_service import (
     PhysicsCursorError,
     PhysicsCursorService,
 )
-from arkcursor.ui.cursor_preview import CursorPreview
-from arkcursor.ui.physics_overlay import resolve_cursor_image_path
+from qmcursor.ui.cursor_preview import CursorPreview
+from qmcursor.ui.physics_overlay import resolve_cursor_image_path
 
 QM_CUSTOM_CATEGORY = "QMcursor 自制指针"
 
@@ -467,7 +467,7 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "恢复首次备份",
-            "确定恢复首次使用 ArkCursor 时的鼠标指针设置吗？",
+            "确定恢复首次使用 QMcursor 时的鼠标指针设置吗？",
         )
         if answer != QMessageBox.Yes:
             return

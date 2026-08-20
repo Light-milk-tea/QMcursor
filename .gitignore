@@ -6,7 +6,6 @@ build/
 dist/
 *.egg-info/
 /*.spec
-ArkCursor.spec
 QMcursor.spec
 QMcursor.exe
 _internal/

@@ -1,8 +1,8 @@
-"""Standalone physics-cursor feel test (thin wrapper around ArkCursor modules).
+"""Standalone physics-cursor feel test (thin wrapper around QMcursor modules).
 
 Run from repo root:
   python tools/physics_cursor_prototype.py
-  python tools/physics_cursor_prototype.py --image src/arkcursor/themes/elaina/arrow.png
+  python tools/physics_cursor_prototype.py --image src/qmcursor/themes/elaina/arrow.png
 """
 
 from __future__ import annotations
@@ -19,17 +19,17 @@ if str(SRC) not in sys.path:
 from PySide6.QtGui import QAction, QIcon  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
 
-from arkcursor.models.theme import CURSOR_ROLES, CursorTheme  # noqa: E402
-from arkcursor.services.physics_cursor_service import (  # noqa: E402
+from qmcursor.models.theme import CURSOR_ROLES, CursorTheme  # noqa: E402
+from qmcursor.services.physics_cursor_service import (  # noqa: E402
     PhysicsCursorError,
     PhysicsCursorService,
 )
 
 
 def _default_theme() -> CursorTheme:
-    arrow = ROOT / "src" / "arkcursor" / "themes" / "elaina" / "arrow.png"
+    arrow = ROOT / "src" / "qmcursor" / "themes" / "elaina" / "arrow.png"
     if not arrow.is_file():
-        matches = sorted((ROOT / "src" / "arkcursor" / "themes").glob("*/arrow.png"))
+        matches = sorted((ROOT / "src" / "qmcursor" / "themes").glob("*/arrow.png"))
         if not matches:
             raise FileNotFoundError("未找到 arrow.png")
         arrow = matches[0]

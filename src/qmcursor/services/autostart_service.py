@@ -9,7 +9,7 @@ import winreg
 from pathlib import Path
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-APP_VALUE_NAME = "ArkCursor"
+APP_VALUE_NAME = "QMcursor"
 
 
 class AutostartService:

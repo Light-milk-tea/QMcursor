@@ -9,12 +9,12 @@ from pathlib import Path
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from arkcursor.services.cursor_service import CursorService
-from arkcursor.services.physics_cursor_service import (
+from qmcursor.services.cursor_service import CursorService
+from qmcursor.services.physics_cursor_service import (
     PhysicsCursorError,
     PhysicsCursorService,
 )
-from arkcursor.ui.physics_overlay import resolve_cursor_image_path
+from qmcursor.ui.physics_overlay import resolve_cursor_image_path
 
 
 class PhysicsTrayHost:
@@ -90,7 +90,7 @@ class PhysicsTrayHost:
         return QIcon()
 
     def open_settings(self) -> None:
-        from arkcursor.ui.main_window import MainWindow
+        from qmcursor.ui.main_window import MainWindow
 
         if self._window is not None:
             self._window.showNormal()

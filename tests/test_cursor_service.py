@@ -5,10 +5,10 @@ import zipfile
 
 import pytest
 
-import arkcursor.services.cursor_service as cursor_module
-from arkcursor.main import apply_at_startup
-from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
-from arkcursor.services.cursor_service import (
+import qmcursor.services.cursor_service as cursor_module
+from qmcursor.main import apply_at_startup
+from qmcursor.models.theme import CURSOR_ROLES, CursorTheme
+from qmcursor.services.cursor_service import (
     CURSOR_SIZE_VALUE,
     CursorService,
     CursorServiceError,

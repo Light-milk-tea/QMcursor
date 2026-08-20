@@ -15,7 +15,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Iterable
 
-from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
+from qmcursor.models.theme import CURSOR_ROLES, CursorTheme
 
 ACTIVE_CURSORS_KEY = r"Control Panel\Cursors"
 USER_SCHEMES_KEY = rf"{ACTIVE_CURSORS_KEY}\Schemes"
@@ -98,9 +98,9 @@ class CursorService:
     def __init__(self, data_dir: Path | None = None) -> None:
         local_app_data = os.environ.get("LOCALAPPDATA")
         default_dir = (
-            Path(local_app_data) / "ArkCursor"
+            Path(local_app_data) / "QMcursor"
             if local_app_data
-            else Path.home() / "AppData" / "Local" / "ArkCursor"
+            else Path.home() / "AppData" / "Local" / "QMcursor"
         )
         self.data_dir = Path(data_dir) if data_dir else default_dir
         self.backup_path = self.data_dir / "backup.json"
@@ -113,7 +113,7 @@ class CursorService:
         return os.path.normpath(os.path.expandvars(value)) if value else ""
 
     def list_themes(self) -> list[CursorTheme]:
-        """Enumerate Windows schemes and themes bundled with ArkCursor."""
+        """Enumerate Windows schemes and themes bundled with QMcursor."""
         themes: dict[str, CursorTheme] = {}
         locations = (
             (winreg.HKEY_LOCAL_MACHINE, SYSTEM_SCHEMES_KEY, 2),

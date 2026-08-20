@@ -1,7 +1,7 @@
 import struct
 from pathlib import Path
 
-from arkcursor.ui.cursor_preview import read_ani_timing
+from qmcursor.ui.cursor_preview import read_ani_timing
 
 
 def test_read_ani_timing(tmp_path: Path) -> None:

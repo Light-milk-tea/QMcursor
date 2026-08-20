@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from arkcursor.models.theme import (
+from qmcursor.models.theme import (
     CURSOR_ROLES,
     CursorTheme,
     friendly_theme_name,

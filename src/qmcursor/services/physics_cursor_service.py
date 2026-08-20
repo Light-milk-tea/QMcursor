@@ -1,4 +1,4 @@
-"""Orchestrate the physics cursor overlay on top of ArkCursor themes."""
+"""Orchestrate the physics cursor overlay on top of QMcursor themes."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from ctypes import wintypes
 
 from PySide6.QtGui import QPixmap
 
-from arkcursor.models.theme import CURSOR_ROLES, CursorTheme
-from arkcursor.ui.physics_overlay import (
+from qmcursor.models.theme import CURSOR_ROLES, CursorTheme
+from qmcursor.ui.physics_overlay import (
     PendantSprite,
     PhysicsConfig,
     PhysicsOverlay,
@@ -168,9 +168,9 @@ class PhysicsCursorService:
     def __init__(self, data_dir: Path | None = None) -> None:
         local_app_data = os.environ.get("LOCALAPPDATA")
         default_dir = (
-            Path(local_app_data) / "ArkCursor"
+            Path(local_app_data) / "QMcursor"
             if local_app_data
-            else Path.home() / "AppData" / "Local" / "ArkCursor"
+            else Path.home() / "AppData" / "Local" / "QMcursor"
         )
         self.data_dir = Path(data_dir) if data_dir else default_dir
         self.state_path = self.data_dir / "physics.json"

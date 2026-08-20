@@ -1,4 +1,4 @@
-"""Development launcher for ArkCursor."""
+"""Development launcher for QMcursor."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from arkcursor.main import main
+from qmcursor.main import main
 
 
 if __name__ == "__main__":

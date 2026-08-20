@@ -37,7 +37,7 @@ Windows 上换鼠标指针样式的小工具。选一套喜欢的主题，点应
 
 支持 `Normal.ani`、`Busy.ani` 等常见安装包命名，也支持
 `Arrow.ani`、`Wait.ani` 等 Windows 角色命名。导入内容保存在当前用户的
-`%LOCALAPPDATA%\ArkCursor\imported`，不会执行包内的 EXE/INF，也不需要写入
+`%LOCALAPPDATA%\QMcursor\imported`，不会执行包内的 EXE/INF，也不需要写入
 `Windows\Cursors`。
 
 原生 ANI 与物理摇摆是两种不同模式：ANI 由 Windows 播放，QMcursor 可以退出；
@@ -78,7 +78,7 @@ python -m venv .venv
 
 项目结构大致是：
 
-- `src/arkcursor/`：程序代码和内置主题
+- `src/qmcursor/`：程序代码和内置主题
 - `tests/`：测试
 - `doc/`：生图与说明文档
 - `run.py`：开发启动入口
