@@ -53,4 +53,4 @@ Only generate this one charm. No collage, no numbers, no UI chrome.
 ## 伊雷娜示例（已完成主题可参考）
 
 主题元素：金框圆徽、五角星、粉宝石、下方蓝水滴。  
-成品路径：`src/arkcursor/themes/elaina/pendant.png`（仅星徽饰物，无上方长链）。
+成品路径：`src/qmcursor/themes/elaina/pendant.png`（仅星徽饰物，无上方长链）。

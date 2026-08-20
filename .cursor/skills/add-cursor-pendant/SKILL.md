@@ -1,6 +1,6 @@
 ---
 name: add-cursor-pendant
-description: 为 QMcursor/ArkCursor 已有指针主题生成并安装挂坠（pendant.png），启用物理摇摆时在指针下以柔性绳索悬挂摇摆。用户提到挂坠、pendant、吊饰、指针装饰、给主题加挂件时使用。
+description: 为 QMcursor/QMcursor 已有指针主题生成并安装挂坠（pendant.png），启用物理摇摆时在指针下以柔性绳索悬挂摇摆。用户提到挂坠、pendant、吊饰、指针装饰、给主题加挂件时使用。
 ---
 
 # 为指针主题添加挂坠
@@ -11,9 +11,9 @@ description: 为 QMcursor/ArkCursor 已有指针主题生成并安装挂坠（pe
 
 ## 输入约定
 
-- 项目根目录含 `pyproject.toml` 与 `src/arkcursor/`。
-- 目标为主题目录：`src/arkcursor/themes/<英文目录名>/`，须已有 `theme.json` 与可用 `arrow.png`。
-- 用户指定主题名/目录；未指定时列出 `src/arkcursor/themes/*/theme.json` 供选择。
+- 项目根目录含 `pyproject.toml` 与 `src/qmcursor/`。
+- 目标为主题目录：`src/qmcursor/themes/<英文目录名>/`，须已有 `theme.json` 与可用 `arrow.png`。
+- 用户指定主题名/目录；未指定时列出 `src/qmcursor/themes/*/theme.json` 供选择。
 - 挂坠生图规范只读取同目录 [prompt.md](prompt.md)，不依赖项目 `doc/` 下的旧提示词。
 
 ## 工作流
@@ -44,7 +44,7 @@ description: 为 QMcursor/ArkCursor 已有指针主题生成并安装挂坠（pe
 ```powershell
 python .cursor/skills/add-cursor-pendant/scripts/install_pendant.py `
   --input "<原图路径>" `
-  --theme-dir "src/arkcursor/themes/<英文目录名>" `
+  --theme-dir "src/qmcursor/themes/<英文目录名>" `
   --background "<临时背景色>"
 ```
 
@@ -56,12 +56,12 @@ python .cursor/skills/add-cursor-pendant/scripts/install_pendant.py `
 
 ```powershell
 python .cursor/skills/add-cursor-pendant/scripts/install_pendant.py `
-  --validate-only "src/arkcursor/themes/<英文目录名>"
+  --validate-only "src/qmcursor/themes/<英文目录名>"
 ```
 
 ### 4. 验证运行时
 
-1. 确认 `src/arkcursor/themes/<目录>/pendant.png` 存在且背景透明。
+1. 确认 `src/qmcursor/themes/<目录>/pendant.png` 存在且背景透明。
 2. 无需改 `theme.json` 或服务代码：`PhysicsCursorService` 会从 Arrow 同级目录加载 `pendant.png`。
 3. 提醒用户：启用「物理摇摆」并应用该主题；若程序已在跑，用托盘「重启 QMcursor」或重启应用。
 4. 快速自检：普通选择下挂点贴图形下方；左右甩动绳子呈弧线；切换到水平调整等角色时挂坠不猛跳。
@@ -76,7 +76,7 @@ python .cursor/skills/add-cursor-pendant/scripts/install_pendant.py `
 | 尺寸 | 默认 `height_ratio=0.85`（相对指针尺寸）；一般不必改代码 |
 | 无文件 | 该主题无挂坠，其它主题不受影响 |
 
-相关实现：`src/arkcursor/services/physics_cursor_service.py`（`_load_pendant_asset`）、`src/arkcursor/ui/physics_overlay.py`（绳索与绘制）。
+相关实现：`src/qmcursor/services/physics_cursor_service.py`（`_load_pendant_asset`）、`src/qmcursor/ui/physics_overlay.py`（绳索与绘制）。
 
 ## 完成报告
 

@@ -1,4 +1,4 @@
-"""Build and validate an ArkCursor theme from 15 generated PNG images."""
+"""Build and validate an QMcursor theme from 15 generated PNG images."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def parse_color(value: str) -> tuple[int, int, int] | None:
 def project_root() -> Path:
     for candidate in Path(__file__).resolve().parents:
         if (candidate / "pyproject.toml").is_file() and (
-            candidate / "src" / "arkcursor"
+            candidate / "src" / "qmcursor"
         ).is_dir():
             return candidate
     raise BuildError("无法定位 QMcursor 项目根目录。")
@@ -421,7 +421,7 @@ def build_theme(
         raise BuildError("色键容差必须在 16–192 之间。")
 
     root = project_root()
-    themes_root = root / "src" / "arkcursor" / "themes"
+    themes_root = root / "src" / "qmcursor" / "themes"
     themes_root.mkdir(parents=True, exist_ok=True)
     target = themes_root / theme_dir
     if target.exists() and not force:
@@ -597,11 +597,11 @@ def validate_theme(theme_path: Path) -> dict[str, object]:
 
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="从 15 张 PNG 构建并校验 QMcursor/ArkCursor 主题。"
+        description="从 15 张 PNG 构建并校验 QMcursor/QMcursor 主题。"
     )
     parser.add_argument("--input", type=Path, help="15 张 PNG 的目录或 5×3 合集")
     parser.add_argument("--theme-name", help="应用内显示的主题名称")
-    parser.add_argument("--theme-dir", help="src/arkcursor/themes 下的目录名")
+    parser.add_argument("--theme-dir", help="src/qmcursor/themes 下的目录名")
     parser.add_argument(
         "--background",
         default="auto",

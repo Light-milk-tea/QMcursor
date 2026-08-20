@@ -358,7 +358,7 @@ Person.ani
 QMcursor 会将导入内容复制到：
 
 ```text
-%LOCALAPPDATA%\ArkCursor\imported\<主题名>\
+%LOCALAPPDATA%\QMcursor\imported\<主题名>\
 ```
 
 导入过程不会执行包内 EXE 或 INF，也不会把文件写入 `C:\Windows\Cursors`。

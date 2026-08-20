@@ -132,7 +132,7 @@ Windows 指针注册表里的路径可以是 `.cur` 或 `.ani`。`CursorService.
 ### 4.3 目录布局示例
 
 ```
-src/arkcursor/themes/mon3tr_ani/
+src/qmcursor/themes/mon3tr_ani/
   theme.json
   arrow.ani
   help.ani
@@ -140,7 +140,7 @@ src/arkcursor/themes/mon3tr_ani/
   preview/arrow_00.png
 ```
 
-导入外部包时，复制到 `%LOCALAPPDATA%\ArkCursor\imported\<name>\`，不写进安装目录，避免升级覆盖。
+导入外部包时，复制到 `%LOCALAPPDATA%\QMcursor\imported\<name>\`，不写进安装目录，避免升级覆盖。
 
 ---
 
@@ -225,7 +225,7 @@ src/arkcursor/themes/mon3tr_ani/
 - Mon3tr zip：`*.ani` + `install.inf`
 - 仅 ANI 的文件夹，文件名可映射到角色
 
-导入后进 `%LOCALAPPDATA%\ArkCursor\imported\`，出现在主题列表「已导入」。
+导入后进 `%LOCALAPPDATA%\QMcursor\imported\`，出现在主题列表「已导入」。
 
 ### 7.2 第二期：导出 INF + ZIP
 

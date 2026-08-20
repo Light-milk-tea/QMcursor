@@ -4,11 +4,11 @@ Run from repo root:
 
   python .cursor/skills/add-cursor-pendant/scripts/install_pendant.py `
     --input path/to/pendant-raw.png `
-    --theme-dir src/arkcursor/themes/elaina `
+    --theme-dir src/qmcursor/themes/elaina `
     --background #FF00FF
 
   python .cursor/skills/add-cursor-pendant/scripts/install_pendant.py `
-    --validate-only src/arkcursor/themes/elaina
+    --validate-only src/qmcursor/themes/elaina
 """
 
 from __future__ import annotations
