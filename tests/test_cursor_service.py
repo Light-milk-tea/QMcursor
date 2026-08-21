@@ -221,6 +221,19 @@ def test_bundled_myrtle_ani_theme_is_available() -> None:
     assert theme.missing_files() == []
 
 
+def test_bundled_angelina_static_theme_is_available() -> None:
+    themes = CursorService.list_bundled_themes()
+
+    theme = next(item for item in themes if item.name == "安洁莉娜小人")
+    assert theme.kind == "cur"
+    assert theme.is_animated is False
+    assert theme.frame_interval_ms is None
+    assert Path(theme.cursors["Arrow"]).name == "arrow.cur"
+    assert theme.cursors["Wait"] == ""
+    assert theme.sizes is None
+    assert theme.missing_files() == []
+
+
 def test_retired_cursor_themes_are_not_listed() -> None:
     names = {theme.name for theme in CursorService.list_bundled_themes()}
 
@@ -231,6 +244,8 @@ def test_retired_cursor_themes_are_not_listed() -> None:
             "纸鹤与风铃（生图试用版）",
             "塔菲",
             "雷电将军",
+            "安洁莉娜",
+            "安洁莉娜 (2)",
         }
     )
 

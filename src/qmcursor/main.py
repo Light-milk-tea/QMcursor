@@ -42,11 +42,13 @@ def _physics_enabled_at_startup() -> bool:
 def run_gui(*, start_hidden: bool = False) -> int:
     from PySide6.QtWidgets import QApplication
 
+    from qmcursor.resources import app_icon
     from qmcursor.ui.physics_tray_host import PhysicsTrayHost
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("QMcursor")
     app.setOrganizationName("QMcursor")
+    app.setWindowIcon(app_icon())
     # Keep running in tray while physics overlay is active.
     app.setQuitOnLastWindowClosed(False)
 

@@ -1,0 +1,23 @@
+{
+  "name": "安洁莉娜小人",
+  "source": 1,
+  "is_custom": true,
+  "kind": "cur",
+  "cursors": {
+    "Arrow": "arrow.cur",
+    "Help": "",
+    "AppStarting": "",
+    "Wait": "",
+    "Crosshair": "",
+    "IBeam": "",
+    "NWPen": "",
+    "No": "",
+    "SizeNS": "",
+    "SizeWE": "",
+    "SizeNWSE": "",
+    "SizeNESW": "",
+    "SizeAll": "",
+    "UpArrow": "",
+    "Hand": ""
+  }
+}

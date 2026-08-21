@@ -80,3 +80,16 @@ def test_only_qmcursor_custom_themes_support_physics() -> None:
     assert theme_supports_physics(system) is False
     assert theme_supports_physics(ani) is False
     assert theme_supports_physics(custom_ani) is False
+
+
+def test_explicit_category_overrides_heuristic() -> None:
+    theme = CursorTheme(
+        "线框示例",
+        {"Arrow": "arrow.ani"},
+        is_custom=True,
+        kind="ani",
+        category="线框cursor",
+    )
+
+    assert theme_category(theme) == "线框cursor"
+    assert theme_supports_physics(theme) is False

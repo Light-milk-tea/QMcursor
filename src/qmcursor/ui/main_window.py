@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -37,6 +37,7 @@ from qmcursor.models.theme import (
     CursorTheme,
     friendly_theme_name,
 )
+from qmcursor.resources import app_icon, app_icon_png_path
 from qmcursor.services.autostart_service import AutostartService
 from qmcursor.services.cursor_service import (
     CURSOR_SIZE_MAX,
@@ -51,12 +52,16 @@ from qmcursor.services.physics_cursor_service import (
 )
 from qmcursor.ui.cursor_preview import CursorPreview
 from qmcursor.ui.physics_overlay import resolve_cursor_image_path
+from qmcursor.ui.theme_style import main_window_stylesheet
 
 QM_CUSTOM_CATEGORY = "QMcursor 自制指针"
+WIREFRAME_CATEGORY = "线框cursor"
 
 
 def theme_category(theme: CursorTheme) -> str:
     """Return the exclusive UI category for a cursor theme."""
+    if theme.category:
+        return theme.category
     if theme.is_custom:
         return "ANI 指针" if theme.is_animated else QM_CUSTOM_CATEGORY
     cursor_paths = [path for path in theme.cursors.values() if path]
@@ -91,8 +96,9 @@ class MainWindow(QMainWindow):
         self._background_handoff: Callable[[], None] | None = None
 
         self.setWindowTitle("QMcursor 鼠标指针")
-        self.resize(880, 560)
-        self.setMinimumSize(720, 460)
+        self.setWindowIcon(app_icon())
+        self.resize(920, 600)
+        self.setMinimumSize(760, 500)
         self._build_ui()
         self._setup_tray()
         self._refresh_current_theme()
@@ -103,16 +109,52 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget(self)
+        root.setObjectName("root")
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(18, 18, 18, 18)
+        root_layout.setContentsMargins(16, 16, 16, 16)
         root_layout.setSpacing(12)
 
-        title = QLabel("鼠标指针样式")
-        title.setObjectName("title")
+        header = QWidget()
+        header.setObjectName("headerBar")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(14, 12, 16, 12)
+        header_layout.setSpacing(12)
+
+        brand_icon = QLabel()
+        brand_icon.setFixedSize(44, 44)
+        icon_path = app_icon_png_path()
+        if icon_path.is_file():
+            pixmap = QPixmap(str(icon_path))
+            brand_icon.setPixmap(
+                pixmap.scaled(
+                    44,
+                    44,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        brand_icon.setAlignment(Qt.AlignCenter)
+
+        brand_text = QVBoxLayout()
+        brand_text.setContentsMargins(0, 0, 0, 0)
+        brand_text.setSpacing(2)
+        brand_title = QLabel("QMcursor")
+        brand_title.setObjectName("brandTitle")
+        brand_subtitle = QLabel("鼠标指针样式 · 一键切换与预览")
+        brand_subtitle.setObjectName("brandSubtitle")
+        brand_text.addWidget(brand_title)
+        brand_text.addWidget(brand_subtitle)
+
+        header_layout.addWidget(brand_icon)
+        header_layout.addLayout(brand_text, 1)
+
+        section_title = QLabel("选择指针方案")
+        section_title.setObjectName("sectionTitle")
         description = QLabel(
-            "选择 Windows 已安装或 QMcursor 内置的指针方案。"
+            "可选用 Windows 已安装、QMcursor 内置或导入的 ANI 方案。"
             "应用前会自动备份当前设置。"
         )
+        description.setObjectName("description")
         description.setWordWrap(True)
         self.current_theme_label = QLabel()
         self.current_theme_label.setObjectName("currentTheme")
@@ -128,15 +170,19 @@ class MainWindow(QMainWindow):
         self.details.verticalHeader().setVisible(False)
         self.details.setEditTriggers(QTableWidget.NoEditTriggers)
         self.details.setSelectionMode(QTableWidget.NoSelection)
-        header = self.details.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        self.details.setShowGrid(False)
+        self.details.setAlternatingRowColors(True)
+        header_view = self.details.horizontalHeader()
+        header_view.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.Stretch)
+        header_view.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self.theme_list)
         splitter.addWidget(self.details)
-        splitter.setSizes([260, 580])
+        splitter.setSizes([280, 600])
+        splitter.setChildrenCollapsible(False)
 
         self.autostart_checkbox = QCheckBox("开机时自动重新应用所选样式")
         self.autostart_checkbox.setChecked(self.autostart_service.is_enabled())
@@ -162,18 +208,22 @@ class MainWindow(QMainWindow):
         self.size_slider.setSingleStep(1)
         self.size_slider.setPageStep(1)
         self.size_slider.setTickInterval(1)
-        self.size_slider.setTickPosition(QSlider.TicksBelow)
+        self.size_slider.setTickPosition(QSlider.NoTicks)
         self.size_slider.valueChanged.connect(self._update_size_label)
 
         self.size_value_label = QLabel()
+        self.size_value_label.setObjectName("sizeValue")
         self.size_value_label.setMinimumWidth(72)
         self.size_value_label.setAlignment(Qt.AlignCenter)
 
         self.apply_size_button = QPushButton("应用大小")
         self.apply_size_button.clicked.connect(self._apply_cursor_size)
 
+        size_caption = QLabel("指针大小")
+        size_caption.setObjectName("sizeCaption")
         size_controls = QHBoxLayout()
-        size_controls.addWidget(QLabel("指针大小"))
+        size_controls.setSpacing(10)
+        size_controls.addWidget(size_caption)
         size_controls.addWidget(self.size_slider, 1)
         size_controls.addWidget(self.size_value_label)
         size_controls.addWidget(self.apply_size_button)
@@ -182,6 +232,7 @@ class MainWindow(QMainWindow):
         self.status_label.setObjectName("status")
 
         self.apply_button = QPushButton("应用所选样式")
+        self.apply_button.setObjectName("primaryButton")
         self.apply_button.setDefault(True)
         self.apply_button.clicked.connect(self._apply_selected_theme)
 
@@ -197,12 +248,14 @@ class MainWindow(QMainWindow):
         self.import_button.setMenu(import_menu)
 
         actions = QHBoxLayout()
+        actions.setSpacing(8)
         actions.addWidget(self.status_label, 1)
         actions.addWidget(self.import_button)
         actions.addWidget(self.restore_button)
         actions.addWidget(self.apply_button)
 
-        root_layout.addWidget(title)
+        root_layout.addWidget(header)
+        root_layout.addWidget(section_title)
         root_layout.addWidget(description)
         root_layout.addWidget(self.current_theme_label)
         root_layout.addWidget(splitter, 1)
@@ -210,39 +263,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.autostart_checkbox)
         root_layout.addLayout(actions)
         self.setCentralWidget(root)
-
-        self.setStyleSheet(
-            """
-            QMainWindow { background: #f5f6f8; }
-            QLabel#title { font-size: 24px; font-weight: 700; }
-            QLabel#currentTheme {
-                padding: 9px 12px;
-                color: #1e3a8a;
-                background: #e8efff;
-                border: 1px solid #c9d8ff;
-                border-radius: 6px;
-                font-weight: 600;
-            }
-            QLabel#status { color: #4b5563; }
-            QTreeWidget, QTableWidget {
-                background: white;
-                border: 1px solid #d8dce3;
-                border-radius: 7px;
-            }
-            QTreeWidget::item { padding: 7px; }
-            QPushButton {
-                padding: 7px 14px;
-                border: 1px solid #c7ccd4;
-                border-radius: 6px;
-                background: white;
-            }
-            QPushButton:default {
-                color: white;
-                background: #2563eb;
-                border-color: #2563eb;
-            }
-            """
-        )
+        self.setStyleSheet(main_window_stylesheet())
 
     def _refresh_current_theme(self) -> None:
         try:
@@ -303,6 +324,7 @@ class MainWindow(QMainWindow):
             ("系统指针", False),
             (QM_CUSTOM_CATEGORY, True),
             ("ANI 指针", True),
+            (WIREFRAME_CATEGORY, True),
         )
         for category, expanded in categories:
             category_themes = [
@@ -726,11 +748,9 @@ class MainWindow(QMainWindow):
             path = resolve_cursor_image_path(theme.cursors.get("Arrow", ""))
             if path is not None and path.is_file():
                 return QIcon(str(path))
-        bundled = (
-            Path(__file__).resolve().parents[1] / "themes" / "elaina" / "arrow.png"
-        )
-        if bundled.is_file():
-            return QIcon(str(bundled))
+        icon = app_icon()
+        if not icon.isNull():
+            return icon
         return self.windowIcon()
 
     def _sync_tray_visibility(self) -> None:

@@ -197,6 +197,11 @@ class CursorService:
                     kind=str(payload.get("kind", "cur")),
                     sizes=sizes,
                     frame_interval_ms=payload.get("frame_interval_ms"),
+                    category=(
+                        str(payload["category"]).strip()
+                        if payload.get("category")
+                        else None
+                    ),
                 )
             except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
                 continue
@@ -212,7 +217,13 @@ class CursorService:
         path = Path(value)
         return str(path.resolve() if path.is_absolute() else (theme_dir / path).resolve())
 
-    def import_ani_pack(self, source: Path | str) -> CursorTheme:
+    def import_ani_pack(
+        self,
+        source: Path | str,
+        *,
+        category: str | None = None,
+        display_name: str | None = None,
+    ) -> CursorTheme:
         """Import a directory or ZIP containing conventionally named ANI files."""
         source_path = Path(source)
         if not source_path.exists():
@@ -224,9 +235,13 @@ class CursorService:
                 (data for name, data in files.items() if name.casefold().endswith(".inf")),
                 None,
             )
-            display_name = self._theme_name_from_inf(inf_bytes) or source_path.stem
-            display_name = display_name.strip() or "导入的动画指针"
-            display_name = self._available_import_name(display_name)
+            resolved_name = (
+                display_name
+                or self._theme_name_from_inf(inf_bytes)
+                or source_path.stem
+            )
+            resolved_name = resolved_name.strip() or "导入的动画指针"
+            resolved_name = self._available_import_name(resolved_name)
 
             role_data: dict[str, bytes] = {}
             for name, data in files.items():
@@ -247,7 +262,7 @@ class CursorService:
                 )
 
             self.imported_themes_dir.mkdir(parents=True, exist_ok=True)
-            folder_name = self._available_import_folder(display_name)
+            folder_name = self._available_import_folder(resolved_name)
             target = self.imported_themes_dir / folder_name
             temporary = Path(
                 tempfile.mkdtemp(prefix=f".{folder_name}-", dir=self.imported_themes_dir)
@@ -259,12 +274,14 @@ class CursorService:
                     (temporary / output_name).write_bytes(data)
                     cursor_values[role] = output_name
                 manifest = {
-                    "name": display_name,
+                    "name": resolved_name,
                     "source": 1,
                     "is_custom": True,
                     "kind": "ani",
                     "cursors": cursor_values,
                 }
+                if category:
+                    manifest["category"] = category
                 (temporary / "theme.json").write_text(
                     json.dumps(manifest, ensure_ascii=False, indent=2),
                     encoding="utf-8",
@@ -279,7 +296,7 @@ class CursorService:
             raise CursorServiceError(f"导入 ANI 包失败：{exc}") from exc
 
         return CursorTheme(
-            name=display_name,
+            name=resolved_name,
             cursors={
                 role: str((target / ROLE_OUTPUT_NAMES[role]).resolve())
                 for role in role_data
@@ -287,6 +304,7 @@ class CursorService:
             source=1,
             is_custom=True,
             kind="ani",
+            category=category,
         )
 
     @staticmethod

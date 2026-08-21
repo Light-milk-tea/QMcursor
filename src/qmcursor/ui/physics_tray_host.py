@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from qmcursor.resources import app_icon
 from qmcursor.services.cursor_service import CursorService
 from qmcursor.services.physics_cursor_service import (
     PhysicsCursorError,
@@ -82,11 +83,9 @@ class PhysicsTrayHost:
             path = resolve_cursor_image_path(theme.cursors.get("Arrow", ""))
             if path is not None and path.is_file():
                 return QIcon(str(path))
-        bundled = (
-            Path(__file__).resolve().parents[1] / "themes" / "elaina" / "arrow.png"
-        )
-        if bundled.is_file():
-            return QIcon(str(bundled))
+        icon = app_icon()
+        if not icon.isNull():
+            return icon
         return QIcon()
 
     def open_settings(self) -> None:

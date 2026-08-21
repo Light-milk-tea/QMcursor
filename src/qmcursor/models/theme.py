@@ -75,6 +75,7 @@ class CursorTheme:
     kind: str = "cur"
     sizes: Mapping[int, Mapping[str, str]] | None = None
     frame_interval_ms: int | None = None
+    category: str | None = None
 
     def __post_init__(self) -> None:
         unknown = set(self.cursors) - set(CURSOR_ROLES)
@@ -165,6 +166,8 @@ class CursorTheme:
             }
         if self.frame_interval_ms is not None:
             payload["frame_interval_ms"] = self.frame_interval_ms
+        if self.category:
+            payload["category"] = self.category
         return payload
 
     @classmethod
@@ -173,6 +176,8 @@ class CursorTheme:
         if not isinstance(cursors, Mapping):
             raise ValueError("主题数据缺少 cursors 映射。")
 
+        raw_category = data.get("category")
+        category = str(raw_category).strip() if raw_category else None
         return cls(
             name=str(data.get("name", "未命名主题")),
             source=int(data.get("source", 1)),
@@ -185,6 +190,7 @@ class CursorTheme:
                 if data.get("frame_interval_ms") is not None
                 else None
             ),
+            category=category or None,
         )
 
     @classmethod

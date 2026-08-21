@@ -218,7 +218,8 @@ class CursorPreview(QWidget):
 
         old_bitmap = gdi32.SelectObject(dc, bitmap)
         try:
-            background = b"\xF5\xF5\xF5\xFF" * (size * size)
+            # Match main window page background (#F4F5F7) for preview cells.
+            background = b"\xF7\xF5\xF4\xFF" * (size * size)
             ctypes.memmove(bits, background, len(background))
             drawn = user32.DrawIconEx(
                 dc,

@@ -33,6 +33,7 @@ qmcursor = [
     "themes/*/*.cur",
     "themes/*/*.png",
     "themes/*/*.json",
+    "resources/*",
 ]
 
 [tool.pytest.ini_options]
