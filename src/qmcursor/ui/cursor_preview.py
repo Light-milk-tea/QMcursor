@@ -9,7 +9,17 @@ from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QLabel,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from qmcursor.models.theme import CURSOR_ROLES, ROLE_LABELS, CursorTheme
 
 SYSTEM_CURSOR_IDS = {
     "Arrow": 32512,
@@ -218,8 +228,8 @@ class CursorPreview(QWidget):
 
         old_bitmap = gdi32.SelectObject(dc, bitmap)
         try:
-            # Match main window page background (#F4F5F7) for preview cells.
-            background = b"\xF7\xF5\xF4\xFF" * (size * size)
+            # Match preview-card background (#FAFBFC) so the glyph sits on the tile.
+            background = b"\xFC\xFB\xFA\xFF" * (size * size)
             ctypes.memmove(bits, background, len(background))
             drawn = user32.DrawIconEx(
                 dc,
@@ -252,8 +262,12 @@ class CursorPreview(QWidget):
             gdi32.DeleteObject(bitmap)
             gdi32.DeleteDC(dc)
 
-    def closeEvent(self, event) -> None:
+    def shutdown(self) -> None:
+        self._timer.stop()
         self._release_cursor()
+
+    def closeEvent(self, event) -> None:
+        self.shutdown()
         super().closeEvent(event)
 
     def _release_cursor(self) -> None:
@@ -269,3 +283,120 @@ class CursorPreview(QWidget):
             self._release_cursor()
         except Exception:
             pass
+
+
+class RolePreviewCard(QFrame):
+    """One cursor role: live preview plus a short label."""
+
+    def __init__(
+        self,
+        role: str,
+        cursor_path: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("previewCard")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        preview = CursorPreview(role, cursor_path, self)
+        self._preview = preview
+
+        title = QLabel(ROLE_LABELS.get(role, role))
+        title.setObjectName("roleTitle")
+        title.setAlignment(Qt.AlignCenter)
+
+        display_path = Path(cursor_path).name if cursor_path else "系统默认"
+        file_label = QLabel(display_path)
+        file_label.setObjectName("roleFile")
+        file_label.setAlignment(Qt.AlignCenter)
+        file_label.setToolTip(cursor_path or "由 Windows 使用默认指针")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 12, 10, 12)
+        layout.setSpacing(6)
+        layout.addWidget(preview, 0, Qt.AlignCenter)
+        layout.addWidget(title)
+        layout.addWidget(file_label)
+
+    def shutdown(self) -> None:
+        self._preview.shutdown()
+
+
+class ThemePreviewPanel(QWidget):
+    """Scrollable preview gallery for every cursor role in a theme."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._columns = 3
+        self._cards: list[RolePreviewCard] = []
+
+        self._empty = QLabel("从左侧选择一套指针方案，即可预览每种用途。")
+        self._empty.setObjectName("emptyState")
+        self._empty.setAlignment(Qt.AlignCenter)
+        self._empty.setWordWrap(True)
+
+        self._container = QWidget()
+        self._grid = QGridLayout(self._container)
+        self._grid.setContentsMargins(12, 8, 12, 12)
+        self._grid.setSpacing(10)
+        self._grid.setAlignment(Qt.AlignTop)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setWidget(self._container)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._empty)
+        layout.addWidget(self._scroll, 1)
+        self.show_empty()
+
+    def show_empty(self, message: str | None = None) -> None:
+        self.clear()
+        if message:
+            self._empty.setText(message)
+        self._empty.show()
+        self._scroll.hide()
+
+    def show_theme(self, theme: CursorTheme, preview_size: int) -> None:
+        self.clear()
+        preview_cursors = theme.resolved_cursors(preview_size)
+        for index, role in enumerate(CURSOR_ROLES):
+            card = RolePreviewCard(role, preview_cursors[role], self._container)
+            row, column = divmod(index, self._columns)
+            self._grid.addWidget(card, row, column)
+            self._cards.append(card)
+        self._empty.hide()
+        self._scroll.show()
+
+    def clear(self) -> None:
+        for card in self._cards:
+            card.shutdown()
+            self._grid.removeWidget(card)
+            card.deleteLater()
+        self._cards.clear()
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        width = self._scroll.viewport().width() if self._scroll.isVisible() else self.width()
+        columns = 4 if width >= 640 else 3 if width >= 440 else 2
+        if columns != self._columns and self._cards:
+            self._columns = columns
+            self._reflow()
+        else:
+            self._columns = columns
+
+    def _reflow(self) -> None:
+        for card in self._cards:
+            self._grid.removeWidget(card)
+        for index, card in enumerate(self._cards):
+            row, column = divmod(index, self._columns)
+            self._grid.addWidget(card, row, column)

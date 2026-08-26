@@ -72,15 +72,84 @@ def main_window_stylesheet() -> str:
         border-radius: 8px;
         padding: 4px 8px;
     }}
-    QFrame#card {{
+    QLabel#previewTitle {{
+        color: {TEXT_PRIMARY};
+        font-size: 15px;
+        font-weight: 700;
+    }}
+    QLabel#previewMeta {{
+        color: {TEXT_MUTED};
+        font-size: 12px;
+    }}
+    QLabel#badgeApplied {{
+        color: {BILI_PINK};
+        background: {CHIP_BG};
+        border: 1px solid {CHIP_BORDER};
+        border-radius: 8px;
+        padding: 3px 8px;
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel#badgeIdle {{
+        color: {TEXT_SECONDARY};
+        background: #F0F1F2;
+        border: 1px solid {BORDER};
+        border-radius: 8px;
+        padding: 3px 8px;
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel#emptyState {{
+        color: {TEXT_MUTED};
+        font-size: 13px;
+        padding: 32px 24px;
+    }}
+    QLabel#roleTitle {{
+        color: {TEXT_PRIMARY};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel#roleFile {{
+        color: {TEXT_MUTED};
+        font-size: 11px;
+    }}
+    QLabel#filterCount {{
+        color: {TEXT_MUTED};
+        font-size: 11px;
+        padding: 0 2px;
+    }}
+    QFrame#card, QWidget#footerBar, QWidget#previewPanel {{
         background: {CARD_BG};
         border: 1px solid {BORDER};
         border-radius: 12px;
     }}
-    QTreeWidget, QTableWidget {{
+    QWidget#previewHeader {{
+        background: transparent;
+    }}
+    QFrame#previewCard {{
+        background: #FAFBFC;
+        border: 1px solid {BORDER};
+        border-radius: 10px;
+    }}
+    QFrame#previewCard:hover {{
+        background: #FFF7FA;
+        border-color: {CHIP_BORDER};
+    }}
+    QLineEdit#themeSearch {{
         background: {CARD_BG};
         border: 1px solid {BORDER};
-        border-radius: 12px;
+        border-radius: 8px;
+        padding: 7px 10px;
+        color: {TEXT_PRIMARY};
+        selection-background-color: #FFE4EC;
+        selection-color: {TEXT_PRIMARY};
+    }}
+    QLineEdit#themeSearch:focus {{
+        border-color: {BILI_PINK};
+    }}
+    QTreeWidget, QTableWidget {{
+        background: transparent;
+        border: none;
         outline: none;
         color: {TEXT_PRIMARY};
         alternate-background-color: #FAFBFC;
@@ -99,9 +168,6 @@ def main_window_stylesheet() -> str:
     QTreeWidget::item:selected {{
         background: #FFE4EC;
         color: {TEXT_PRIMARY};
-    }}
-    QTreeWidget::branch {{
-        background: transparent;
     }}
     QHeaderView::section {{
         background: #FAFBFC;

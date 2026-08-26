@@ -58,10 +58,26 @@ THEME_NAME_LABELS = {
     "windows standard (extra large)": "经典指针（特大）",
 }
 
+# The only Windows inbox scheme kept in the client list.
+CLASSIC_SYSTEM_SCHEME_NAMES = frozenset({"windows aero"})
+
+# External installer leftovers that duplicate an imported QMcursor theme.
+HIDDEN_SCHEME_NAMES = frozenset({"mls__cursor"})
+
 
 def friendly_theme_name(name: str) -> str:
     """Return an easy-to-understand Chinese label for Windows themes."""
     return THEME_NAME_LABELS.get(name.strip().casefold(), name)
+
+
+def is_classic_system_scheme(name: str) -> bool:
+    """True for the single Windows inbox scheme pinned at the top of the list."""
+    return name.strip().casefold() in CLASSIC_SYSTEM_SCHEME_NAMES
+
+
+def is_hidden_scheme(name: str) -> bool:
+    """True for duplicate Windows schemes that should not appear in the client."""
+    return name.strip().casefold() in HIDDEN_SCHEME_NAMES
 
 
 @dataclass(frozen=True, slots=True)

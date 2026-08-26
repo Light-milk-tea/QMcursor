@@ -6,6 +6,8 @@ from qmcursor.models.theme import (
     CURSOR_ROLES,
     CursorTheme,
     friendly_theme_name,
+    is_classic_system_scheme,
+    is_hidden_scheme,
 )
 
 
@@ -100,3 +102,29 @@ def test_windows_theme_names_are_localized(
 
 def test_custom_theme_name_is_preserved() -> None:
     assert friendly_theme_name("动漫主题") == "动漫主题"
+
+
+@pytest.mark.parametrize(
+    ("system_name", "kept"),
+    [
+        ("Windows Aero", True),
+        ("Windows Black", False),
+        ("Windows Inverted", False),
+        ("Windows Standard", False),
+        ("Windows Aero L", False),
+        ("Windows Aero XL)", False),
+        ("Windows Black (large)", False),
+        ("Windows Inverted (extra large)", False),
+        ("Windows Standard (large)", False),
+        ("Magnified", False),
+    ],
+)
+def test_classic_system_schemes_exclude_size_variants(
+    system_name: str, kept: bool
+) -> None:
+    assert is_classic_system_scheme(system_name) is kept
+
+
+def test_mls_cursor_scheme_is_hidden_as_wireframe_duplicate() -> None:
+    assert is_hidden_scheme("mls__cursor") is True
+    assert is_hidden_scheme("线框·魔理莎") is False

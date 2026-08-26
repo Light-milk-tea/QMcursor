@@ -3,6 +3,7 @@
   "source": 1,
   "is_custom": true,
   "kind": "ani",
+  "category": "QM旧版指针",
   "cursors": {
     "Arrow": "arrow.ani",
     "Help": "help.ani",

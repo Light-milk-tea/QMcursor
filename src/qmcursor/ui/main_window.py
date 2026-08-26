@@ -7,15 +7,16 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -23,8 +24,6 @@ from PySide6.QtWidgets import (
     QSlider,
     QSplitter,
     QSystemTrayIcon,
-    QTableWidget,
-    QTableWidgetItem,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -32,8 +31,6 @@ from PySide6.QtWidgets import (
 )
 
 from qmcursor.models.theme import (
-    CURSOR_ROLES,
-    ROLE_LABELS,
     CursorTheme,
     friendly_theme_name,
 )
@@ -50,29 +47,67 @@ from qmcursor.services.physics_cursor_service import (
     PhysicsCursorError,
     PhysicsCursorService,
 )
-from qmcursor.ui.cursor_preview import CursorPreview
+from qmcursor.ui.cursor_preview import ThemePreviewPanel
 from qmcursor.ui.physics_overlay import resolve_cursor_image_path
 from qmcursor.ui.theme_style import main_window_stylesheet
 
-QM_CUSTOM_CATEGORY = "QMcursor 自制指针"
+QM_CUSTOM_CATEGORY = "QM旧版指针"
+QM_NEW_CATEGORY = "QM新版指针"
 WIREFRAME_CATEGORY = "线框cursor"
+CATEGORY_NAME_ROLE = Qt.UserRole + 1
+WIREFRAME_SCHEME_NAMES = frozenset({"mon3tr鼠标"})
+QM_CUSTOM_SCHEME_NAMES = frozenset({"桃金娘"})
 
 
 def theme_category(theme: CursorTheme) -> str:
     """Return the exclusive UI category for a cursor theme."""
     if theme.category:
         return theme.category
+    if theme.name.strip().casefold() in WIREFRAME_SCHEME_NAMES:
+        return WIREFRAME_CATEGORY
+    if theme.name.strip().casefold() in QM_CUSTOM_SCHEME_NAMES:
+        return QM_CUSTOM_CATEGORY
     if theme.is_custom:
-        return "ANI 指针" if theme.is_animated else QM_CUSTOM_CATEGORY
+        return QM_NEW_CATEGORY if theme.is_animated else QM_CUSTOM_CATEGORY
     cursor_paths = [path for path in theme.cursors.values() if path]
     if cursor_paths and all(path.casefold().endswith(".ani") for path in cursor_paths):
-        return "ANI 指针"
+        return QM_NEW_CATEGORY
     return "系统指针"
 
 
 def theme_supports_physics(theme: CursorTheme) -> bool:
-    """Physical wobble is only available for bundled QMcursor PNG/CUR themes."""
-    return theme_category(theme) == QM_CUSTOM_CATEGORY
+    """Physical wobble is only available for static QMcursor CUR/PNG themes."""
+    return theme_category(theme) == QM_CUSTOM_CATEGORY and not theme.is_animated
+
+
+def theme_display_name(theme: CursorTheme) -> str:
+    """Sidebar / header label, including the native-ANI hint."""
+    name = friendly_theme_name(theme.name)
+    if theme.is_animated:
+        return f"{name}（系统动画）"
+    return name
+
+
+def theme_matches_query(theme: CursorTheme, query: str) -> bool:
+    """Match a theme against the sidebar search box."""
+    needle = query.strip().casefold()
+    if not needle:
+        return True
+    return needle in friendly_theme_name(theme.name).casefold() or needle in theme.name.casefold()
+
+
+def category_item_label(name: str, expanded: bool) -> str:
+    """Visible expand/collapse marker, replacing the native tree branch."""
+    return f"{'▼' if expanded else '▶'}  {name}"
+
+
+def theme_preview_meta(theme: CursorTheme) -> str:
+    """One-line hint shown above the preview gallery."""
+    if theme.is_animated:
+        return "Windows 原生动画 · 关闭软件后仍会播放"
+    if theme_supports_physics(theme):
+        return "自制主题 · 可启用物理摇摆或挂坠"
+    return "Windows 系统方案 · 预览每种用途"
 
 
 class MainWindow(QMainWindow):
@@ -91,14 +126,18 @@ class MainWindow(QMainWindow):
         self.themes: list[CursorTheme] = []
         self._updating_autostart = False
         self._updating_physics = False
+        self._syncing_size = False
         self._force_quit = False
-        self._physics_tree_item: QTreeWidgetItem | None = None
+        self._applied_name = ""
         self._background_handoff: Callable[[], None] | None = None
+        self._preview_refresh_timer = QTimer(self)
+        self._preview_refresh_timer.setSingleShot(True)
+        self._preview_refresh_timer.timeout.connect(self._refresh_selected_preview)
 
         self.setWindowTitle("QMcursor 鼠标指针")
         self.setWindowIcon(app_icon())
-        self.resize(920, 600)
-        self.setMinimumSize(760, 500)
+        self.resize(1000, 680)
+        self.setMinimumSize(820, 540)
         self._build_ui()
         self._setup_tray()
         self._refresh_current_theme()
@@ -117,18 +156,18 @@ class MainWindow(QMainWindow):
         header = QWidget()
         header.setObjectName("headerBar")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(14, 12, 16, 12)
+        header_layout.setContentsMargins(14, 10, 14, 10)
         header_layout.setSpacing(12)
 
         brand_icon = QLabel()
-        brand_icon.setFixedSize(44, 44)
+        brand_icon.setFixedSize(40, 40)
         icon_path = app_icon_png_path()
         if icon_path.is_file():
             pixmap = QPixmap(str(icon_path))
             brand_icon.setPixmap(
                 pixmap.scaled(
-                    44,
-                    44,
+                    40,
+                    40,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
@@ -137,58 +176,96 @@ class MainWindow(QMainWindow):
 
         brand_text = QVBoxLayout()
         brand_text.setContentsMargins(0, 0, 0, 0)
-        brand_text.setSpacing(2)
+        brand_text.setSpacing(1)
         brand_title = QLabel("QMcursor")
         brand_title.setObjectName("brandTitle")
-        brand_subtitle = QLabel("鼠标指针样式 · 一键切换与预览")
+        brand_subtitle = QLabel("选择方案即可预览，双击或点应用后生效")
         brand_subtitle.setObjectName("brandSubtitle")
         brand_text.addWidget(brand_title)
         brand_text.addWidget(brand_subtitle)
 
-        header_layout.addWidget(brand_icon)
-        header_layout.addLayout(brand_text, 1)
-
-        section_title = QLabel("选择指针方案")
-        section_title.setObjectName("sectionTitle")
-        description = QLabel(
-            "可选用 Windows 已安装、QMcursor 内置或导入的 ANI 方案。"
-            "应用前会自动备份当前设置。"
-        )
-        description.setObjectName("description")
-        description.setWordWrap(True)
         self.current_theme_label = QLabel()
         self.current_theme_label.setObjectName("currentTheme")
+        self.current_theme_label.setToolTip("当前已应用到 Windows 的指针方案")
+
+        header_layout.addWidget(brand_icon)
+        header_layout.addLayout(brand_text, 1)
+        header_layout.addWidget(self.current_theme_label)
+
+        self.search_box = QLineEdit()
+        self.search_box.setObjectName("themeSearch")
+        self.search_box.setPlaceholderText("搜索方案…")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self._filter_themes)
+
+        self.filter_count_label = QLabel()
+        self.filter_count_label.setObjectName("filterCount")
 
         self.theme_list = QTreeWidget()
         self.theme_list.setHeaderHidden(True)
         self.theme_list.setIndentation(18)
-        self.theme_list.setAlternatingRowColors(True)
+        self.theme_list.setRootIsDecorated(False)
+        self.theme_list.setAnimated(True)
+        self.theme_list.setAlternatingRowColors(False)
         self.theme_list.currentItemChanged.connect(self._show_theme_details)
+        self.theme_list.itemActivated.connect(self._on_theme_activated)
+        self.theme_list.itemClicked.connect(self._on_theme_item_clicked)
+        self.theme_list.itemExpanded.connect(self._on_category_expanded)
+        self.theme_list.itemCollapsed.connect(self._on_category_collapsed)
 
-        self.details = QTableWidget(0, 3)
-        self.details.setHorizontalHeaderLabels(["用途", "事件指针预览", "指针文件"])
-        self.details.verticalHeader().setVisible(False)
-        self.details.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.details.setSelectionMode(QTableWidget.NoSelection)
-        self.details.setShowGrid(False)
-        self.details.setAlternatingRowColors(True)
-        header_view = self.details.horizontalHeader()
-        header_view.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(2, QHeaderView.Stretch)
-        header_view.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        left_panel = QFrame()
+        left_panel.setObjectName("card")
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(10, 10, 10, 10)
+        left_layout.setSpacing(8)
+        left_layout.addWidget(self.search_box)
+        left_layout.addWidget(self.filter_count_label)
+        left_layout.addWidget(self.theme_list, 1)
+
+        self.preview_title = QLabel("选择指针方案")
+        self.preview_title.setObjectName("previewTitle")
+        self.preview_meta = QLabel("可选用系统、自制或导入的 ANI 方案，应用前会自动备份。")
+        self.preview_meta.setObjectName("previewMeta")
+        self.preview_meta.setWordWrap(True)
+        self.preview_badge = QLabel()
+        self.preview_badge.hide()
+
+        preview_heading = QVBoxLayout()
+        preview_heading.setContentsMargins(0, 0, 0, 0)
+        preview_heading.setSpacing(2)
+        preview_heading.addWidget(self.preview_title)
+        preview_heading.addWidget(self.preview_meta)
+
+        preview_header = QWidget()
+        preview_header.setObjectName("previewHeader")
+        preview_header_layout = QHBoxLayout(preview_header)
+        preview_header_layout.setContentsMargins(14, 12, 14, 8)
+        preview_header_layout.setSpacing(10)
+        preview_header_layout.addLayout(preview_heading, 1)
+        preview_header_layout.addWidget(self.preview_badge, 0, Qt.AlignTop)
+
+        self.preview_panel = ThemePreviewPanel()
+
+        preview_card = QWidget()
+        preview_card.setObjectName("previewPanel")
+        preview_card_layout = QVBoxLayout(preview_card)
+        preview_card_layout.setContentsMargins(0, 0, 0, 0)
+        preview_card_layout.setSpacing(0)
+        preview_card_layout.addWidget(preview_header)
+        preview_card_layout.addWidget(self.preview_panel, 1)
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self.theme_list)
-        splitter.addWidget(self.details)
-        splitter.setSizes([280, 600])
+        splitter.addWidget(left_panel)
+        splitter.addWidget(preview_card)
+        splitter.setSizes([280, 680])
         splitter.setChildrenCollapsible(False)
 
-        self.autostart_checkbox = QCheckBox("开机时自动重新应用所选样式")
+        self.autostart_checkbox = QCheckBox("开机时自动重新应用")
         self.autostart_checkbox.setChecked(self.autostart_service.is_enabled())
+        self.autostart_checkbox.setToolTip("开机后自动套用上次在 QMcursor 里应用的方案")
         self.autostart_checkbox.toggled.connect(self._toggle_autostart)
 
-        self.physics_checkbox = QCheckBox("启用物理摇摆（实验）")
+        self.physics_checkbox = QCheckBox("启用物理摇摆")
         self._physics_default_tooltip = (
             "用叠加层绘制当前主题指针，随移动软跟随、摇摆，并按用途自动换图"
             "（文本选择、链接等）。若主题含 pendant.png，会在指针下方挂坠摇摆。"
@@ -197,8 +274,8 @@ class MainWindow(QMainWindow):
         )
         self.physics_checkbox.setToolTip(self._physics_default_tooltip)
         self.physics_checkbox.setStyleSheet("background: transparent;")
+        self.physics_checkbox.setEnabled(False)
         self.physics_checkbox.toggled.connect(self._toggle_physics)
-        self.physics_checkbox.hide()
 
         self.size_slider = QSlider(Qt.Horizontal)
         size_level_count = (
@@ -209,24 +286,23 @@ class MainWindow(QMainWindow):
         self.size_slider.setPageStep(1)
         self.size_slider.setTickInterval(1)
         self.size_slider.setTickPosition(QSlider.NoTicks)
-        self.size_slider.valueChanged.connect(self._update_size_label)
+        self.size_slider.setToolTip("拖动预览，松手后应用到系统")
+        self.size_slider.valueChanged.connect(self._on_size_slider_changed)
+        self.size_slider.sliderReleased.connect(self._on_size_slider_released)
 
         self.size_value_label = QLabel()
         self.size_value_label.setObjectName("sizeValue")
         self.size_value_label.setMinimumWidth(72)
         self.size_value_label.setAlignment(Qt.AlignCenter)
 
-        self.apply_size_button = QPushButton("应用大小")
-        self.apply_size_button.clicked.connect(self._apply_cursor_size)
-
         size_caption = QLabel("指针大小")
         size_caption.setObjectName("sizeCaption")
         size_controls = QHBoxLayout()
+        size_controls.setContentsMargins(0, 0, 0, 0)
         size_controls.setSpacing(10)
         size_controls.addWidget(size_caption)
         size_controls.addWidget(self.size_slider, 1)
         size_controls.addWidget(self.size_value_label)
-        size_controls.addWidget(self.apply_size_button)
 
         self.status_label = QLabel("正在读取系统指针方案……")
         self.status_label.setObjectName("status")
@@ -234,9 +310,11 @@ class MainWindow(QMainWindow):
         self.apply_button = QPushButton("应用所选样式")
         self.apply_button.setObjectName("primaryButton")
         self.apply_button.setDefault(True)
+        self.apply_button.setToolTip("把左侧选中的方案应用到 Windows，也可双击方案")
         self.apply_button.clicked.connect(self._apply_selected_theme)
 
-        self.restore_button = QPushButton("恢复首次备份")
+        self.restore_button = QPushButton("恢复备份")
+        self.restore_button.setToolTip("恢复首次使用 QMcursor 时备份的指针设置")
         self.restore_button.clicked.connect(self._restore_backup)
 
         self.import_button = QPushButton("导入 ANI 包")
@@ -247,21 +325,33 @@ class MainWindow(QMainWindow):
         import_directory_action.triggered.connect(self._import_ani_directory)
         self.import_button.setMenu(import_menu)
 
+        options = QHBoxLayout()
+        options.setContentsMargins(0, 0, 0, 0)
+        options.setSpacing(16)
+        options.addWidget(self.autostart_checkbox)
+        options.addWidget(self.physics_checkbox)
+        options.addStretch(1)
+
         actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
         actions.addWidget(self.status_label, 1)
         actions.addWidget(self.import_button)
         actions.addWidget(self.restore_button)
         actions.addWidget(self.apply_button)
 
+        footer = QWidget()
+        footer.setObjectName("footerBar")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(14, 12, 14, 12)
+        footer_layout.setSpacing(10)
+        footer_layout.addLayout(size_controls)
+        footer_layout.addLayout(options)
+        footer_layout.addLayout(actions)
+
         root_layout.addWidget(header)
-        root_layout.addWidget(section_title)
-        root_layout.addWidget(description)
-        root_layout.addWidget(self.current_theme_label)
         root_layout.addWidget(splitter, 1)
-        root_layout.addLayout(size_controls)
-        root_layout.addWidget(self.autostart_checkbox)
-        root_layout.addLayout(actions)
+        root_layout.addWidget(footer)
         self.setCentralWidget(root)
         self.setStyleSheet(main_window_stylesheet())
 
@@ -269,28 +359,44 @@ class MainWindow(QMainWindow):
         try:
             theme = self.cursor_service.current_theme()
             display_name = friendly_theme_name(theme.name)
-            self.current_theme_label.setText(f"目前指针样式：{display_name}")
+            self._applied_name = theme.name
+            self.current_theme_label.setText(f"当前：{display_name}")
             self.current_theme_label.setToolTip(
                 f"Windows 系统方案名称：{theme.name}"
             )
         except OSError as exc:
-            self.current_theme_label.setText("目前指针样式：读取失败")
+            self._applied_name = ""
+            self.current_theme_label.setText("当前：读取失败")
             self.current_theme_label.setToolTip(str(exc))
+        self._refresh_applied_markers()
+        self._sync_apply_button()
+        self._update_preview_chrome(self._selected_theme())
 
     def _refresh_cursor_size(self) -> None:
         try:
             size = self.cursor_service.current_cursor_size()
         except OSError as exc:
             self.size_slider.setEnabled(False)
-            self.apply_size_button.setEnabled(False)
             self.size_value_label.setText("读取失败")
             self.size_value_label.setToolTip(str(exc))
             return
-        level = round((size - CURSOR_SIZE_MIN) / CURSOR_SIZE_STEP) + 1
-        self.size_slider.setValue(level)
-        self._update_size_label(level)
+        self._syncing_size = True
+        try:
+            level = round((size - CURSOR_SIZE_MIN) / CURSOR_SIZE_STEP) + 1
+            self.size_slider.setValue(level)
+            self._set_size_label(level)
+        finally:
+            self._syncing_size = False
 
-    def _update_size_label(self, level: int) -> None:
+    def _preview_size(self) -> int:
+        return CURSOR_SIZE_MIN + (self.size_slider.value() - 1) * CURSOR_SIZE_STEP
+
+    def _on_size_slider_changed(self, level: int) -> None:
+        self._set_size_label(level)
+        if not self._syncing_size:
+            self._preview_refresh_timer.start(140)
+
+    def _set_size_label(self, level: int) -> None:
         size = CURSOR_SIZE_MIN + (level - 1) * CURSOR_SIZE_STEP
         theme = self._selected_theme()
         selected_size = (
@@ -302,13 +408,25 @@ class MainWindow(QMainWindow):
         self.size_value_label.setText(f"{size} px{suffix}")
         self.size_value_label.setMinimumWidth(72 if selected_size is None else 150)
         self.size_value_label.setToolTip(
-            f"大小等级 {level} / {self.size_slider.maximum()}"
+            f"大小等级 {level} / {self.size_slider.maximum()}，松手后应用到系统"
             + (
-                f"；应用该主题时使用最接近的 {selected_size} px ANI 资源"
+                f"；该主题会使用最接近的 {selected_size} px ANI 资源"
                 if selected_size is not None
                 else ""
             )
         )
+
+    def _on_size_slider_released(self) -> None:
+        if self._syncing_size or not self.size_slider.isEnabled():
+            return
+        desired = self._preview_size()
+        try:
+            current = self.cursor_service.current_cursor_size()
+        except OSError:
+            current = None
+        if current == desired:
+            return
+        self._apply_cursor_size()
 
     def _load_themes(self) -> None:
         try:
@@ -317,14 +435,24 @@ class MainWindow(QMainWindow):
             self._show_error("读取指针方案失败", str(exc))
             self.themes = []
 
-        self._detach_physics_checkbox()
         self.theme_list.clear()
         theme_items: dict[int, QTreeWidgetItem] = {}
+
+        pinned_system = [
+            (index, theme)
+            for index, theme in enumerate(self.themes)
+            if theme_category(theme) == "系统指针"
+        ]
+        for index, theme in pinned_system:
+            item = QTreeWidgetItem(self.theme_list, [theme_display_name(theme)])
+            item.setData(0, Qt.UserRole, index)
+            item.setToolTip(0, f"方案名称：{theme.name}")
+            theme_items[index] = item
+
         categories = (
-            ("系统指针", False),
-            (QM_CUSTOM_CATEGORY, True),
-            ("ANI 指针", True),
-            (WIREFRAME_CATEGORY, True),
+            (QM_CUSTOM_CATEGORY, False),
+            (QM_NEW_CATEGORY, False),
+            (WIREFRAME_CATEGORY, False),
         )
         for category, expanded in categories:
             category_themes = [
@@ -335,20 +463,18 @@ class MainWindow(QMainWindow):
             if not category_themes:
                 continue
 
-            header_item = QTreeWidgetItem(self.theme_list, [category])
+            header_item = QTreeWidgetItem(self.theme_list)
             header_item.setFlags(Qt.ItemIsEnabled)
+            header_item.setData(0, CATEGORY_NAME_ROLE, category)
             header_font = header_item.font(0)
             header_font.setBold(True)
             header_item.setFont(0, header_font)
             header_item.setExpanded(expanded)
-            if category == QM_CUSTOM_CATEGORY:
-                self._attach_physics_checkbox(header_item)
+            header_item.setText(0, category_item_label(category, expanded))
+            header_item.setToolTip(0, "点击折叠或展开这一类方案")
 
             for index, theme in category_themes:
-                display_name = friendly_theme_name(theme.name)
-                if theme.is_animated:
-                    display_name += "（系统动画）"
-                item = QTreeWidgetItem(header_item, [display_name])
+                item = QTreeWidgetItem(header_item, [theme_display_name(theme)])
                 item.setData(0, Qt.UserRole, index)
                 item.setToolTip(0, f"方案名称：{theme.name}")
                 theme_items[index] = item
@@ -359,7 +485,11 @@ class MainWindow(QMainWindow):
 
         if enabled:
             selected = self.cursor_service.load_selected_theme()
-            selected_name = selected.name.casefold() if selected else ""
+            selected_name = (
+                selected.name.casefold()
+                if selected
+                else self._applied_name.casefold()
+            )
             theme_index = next(
                 (
                     index
@@ -369,41 +499,203 @@ class MainWindow(QMainWindow):
                 0,
             )
             self.theme_list.setCurrentItem(theme_items[theme_index])
-            self.status_label.setText(f"已找到 {len(self.themes)} 个可用方案")
+            self.theme_list.setFocus()
+            self.status_label.setText("选择方案可预览，双击或点右下角应用")
         else:
-            self.details.setRowCount(0)
+            self.preview_panel.show_empty("未找到可用的 Windows 指针方案")
+            self._update_preview_chrome(None)
             self.status_label.setText("未找到可用的 Windows 指针方案")
+        self._filter_themes(self.search_box.text())
+        if not self.search_box.text().strip():
+            self.theme_list.setAnimated(False)
+            self._collapse_all_categories()
+            self.theme_list.setAnimated(True)
+        self._refresh_applied_markers()
+        self._sync_apply_button()
 
     def _show_theme_details(
         self,
         current: QTreeWidgetItem | None,
         previous: QTreeWidgetItem | None = None,
     ) -> None:
-        del previous
-        theme_index = current.data(0, Qt.UserRole) if current else None
-        if not isinstance(theme_index, int) or not 0 <= theme_index < len(self.themes):
-            self.details.setRowCount(0)
+        if current is None:
+            self.preview_panel.show_empty("从左侧选择一套指针方案，即可预览每种用途。")
+            self._update_preview_chrome(None)
             self._update_physics_controls(None)
+            self._sync_apply_button()
+            return
+
+        theme_index = current.data(0, Qt.UserRole)
+        if not isinstance(theme_index, int) or not 0 <= theme_index < len(self.themes):
+            replacement = None
+            if previous is not None and isinstance(previous.data(0, Qt.UserRole), int):
+                replacement = previous
+            else:
+                replacement = self._first_theme_child(current)
+            if replacement is not None and replacement is not current:
+                self.theme_list.setCurrentItem(replacement)
             return
 
         theme = self.themes[theme_index]
-        preview_size = CURSOR_SIZE_MIN + (
-            self.size_slider.value() - 1
-        ) * CURSOR_SIZE_STEP
-        preview_cursors = theme.resolved_cursors(preview_size)
-        self.details.setRowCount(len(CURSOR_ROLES))
-        for index, role in enumerate(CURSOR_ROLES):
-            path = preview_cursors[role]
-            display_path = Path(path).name if path else "Windows 默认"
-            role_item = QTableWidgetItem(ROLE_LABELS[role])
-            path_item = QTableWidgetItem(display_path)
-            path_item.setToolTip(path or "由 Windows 使用默认指针")
-            self.details.setItem(index, 0, role_item)
-            self.details.setCellWidget(index, 1, CursorPreview(role, path))
-            self.details.setItem(index, 2, path_item)
-            self.details.setRowHeight(index, 52)
+        self.preview_panel.show_theme(theme, self._preview_size())
+        self._update_preview_chrome(theme)
         self._update_physics_controls(theme)
-        self._update_size_label(self.size_slider.value())
+        self._sync_apply_button()
+        self._set_size_label(self.size_slider.value())
+
+    def _refresh_selected_preview(self) -> None:
+        theme = self._selected_theme()
+        if theme is None:
+            return
+        self.preview_panel.show_theme(theme, self._preview_size())
+        self._update_preview_chrome(theme)
+
+    def _update_preview_chrome(self, theme: CursorTheme | None) -> None:
+        if theme is None:
+            self.preview_title.setText("选择指针方案")
+            self.preview_meta.setText(
+                "可选用系统、自制或导入的 ANI 方案，应用前会自动备份。"
+            )
+            self.preview_badge.hide()
+            return
+
+        applied = bool(
+            self._applied_name
+            and theme.name.casefold() == self._applied_name.casefold()
+        )
+        self.preview_title.setText(theme_display_name(theme))
+        self.preview_meta.setText(theme_preview_meta(theme))
+        self.preview_badge.setText("使用中" if applied else "未应用")
+        self.preview_badge.setObjectName("badgeApplied" if applied else "badgeIdle")
+        self.preview_badge.style().unpolish(self.preview_badge)
+        self.preview_badge.style().polish(self.preview_badge)
+        self.preview_badge.show()
+
+    def _on_theme_activated(self, item: QTreeWidgetItem, column: int) -> None:
+        del column
+        if isinstance(item.data(0, Qt.UserRole), int):
+            self._apply_selected_theme()
+
+    def _on_theme_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        del column
+        if item.data(0, CATEGORY_NAME_ROLE):
+            item.setExpanded(not item.isExpanded())
+
+    def _on_category_expanded(self, item: QTreeWidgetItem) -> None:
+        self._refresh_category_label(item)
+
+    def _on_category_collapsed(self, item: QTreeWidgetItem) -> None:
+        self._refresh_category_label(item)
+
+    def _refresh_category_label(self, item: QTreeWidgetItem) -> None:
+        name = item.data(0, CATEGORY_NAME_ROLE)
+        if name:
+            item.setText(0, category_item_label(str(name), item.isExpanded()))
+
+    def _first_theme_child(self, item: QTreeWidgetItem) -> QTreeWidgetItem | None:
+        for index in range(item.childCount()):
+            child = item.child(index)
+            if isinstance(child.data(0, Qt.UserRole), int) and not child.isHidden():
+                return child
+        return None
+
+    def _iter_theme_items(self):
+        root = self.theme_list.invisibleRootItem()
+        for top_index in range(root.childCount()):
+            top = root.child(top_index)
+            if self._theme_from_item(top) is not None:
+                yield top
+                continue
+            for item_index in range(top.childCount()):
+                item = top.child(item_index)
+                if self._theme_from_item(item) is not None:
+                    yield item
+
+    def _filter_themes(self, text: str) -> None:
+        query = text.strip()
+        root = self.theme_list.invisibleRootItem()
+        visible_themes = 0
+        for top_index in range(root.childCount()):
+            top = root.child(top_index)
+            if self._theme_from_item(top) is not None:
+                matched = theme_matches_query(self._theme_from_item(top), query)
+                top.setHidden(not matched)
+                if matched:
+                    visible_themes += 1
+                continue
+
+            visible_in_category = 0
+            for item_index in range(top.childCount()):
+                item = top.child(item_index)
+                theme = self._theme_from_item(item)
+                if theme is None:
+                    item.setHidden(True)
+                    continue
+                matched = theme_matches_query(theme, query)
+                item.setHidden(not matched)
+                if matched:
+                    visible_in_category += 1
+                    visible_themes += 1
+            top.setHidden(visible_in_category == 0)
+            if query and visible_in_category:
+                top.setExpanded(True)
+        total = len(self.themes)
+        if query:
+            self.filter_count_label.setText(f"显示 {visible_themes} / {total} 个方案")
+        else:
+            self.filter_count_label.setText(f"{total} 个方案")
+
+        current = self.theme_list.currentItem()
+        current_theme = self._theme_from_item(current) if current else None
+        if current_theme is None or (current is not None and current.isHidden()):
+            first = self._first_visible_theme_item()
+            if first is not None:
+                self.theme_list.setCurrentItem(first)
+
+    def _collapse_all_categories(self) -> None:
+        root = self.theme_list.invisibleRootItem()
+        for index in range(root.childCount()):
+            item = root.child(index)
+            if item.data(0, CATEGORY_NAME_ROLE):
+                item.setExpanded(False)
+
+    def _first_visible_theme_item(self) -> QTreeWidgetItem | None:
+        for item in self._iter_theme_items():
+            if not item.isHidden():
+                return item
+        return None
+
+    def _theme_from_item(self, item: QTreeWidgetItem | None) -> CursorTheme | None:
+        theme_index = item.data(0, Qt.UserRole) if item else None
+        if isinstance(theme_index, int) and 0 <= theme_index < len(self.themes):
+            return self.themes[theme_index]
+        return None
+
+    def _refresh_applied_markers(self) -> None:
+        applied = self._applied_name.casefold()
+        for item in self._iter_theme_items():
+            theme = self._theme_from_item(item)
+            if theme is None:
+                continue
+            label = theme_display_name(theme)
+            if applied and theme.name.casefold() == applied:
+                label += "  · 使用中"
+            item.setText(0, label)
+
+    def _sync_apply_button(self) -> None:
+        theme = self._selected_theme()
+        enabled = theme is not None
+        self.apply_button.setEnabled(enabled)
+        if theme is None:
+            self.apply_button.setText("应用所选样式")
+            return
+        if (
+            self._applied_name
+            and theme.name.casefold() == self._applied_name.casefold()
+        ):
+            self.apply_button.setText("重新应用")
+        else:
+            self.apply_button.setText("应用所选样式")
 
     def _apply_selected_theme(self) -> None:
         current = self.theme_list.currentItem()
@@ -423,8 +715,13 @@ class MainWindow(QMainWindow):
         except CursorServiceError as exc:
             self._show_error("应用失败", str(exc))
             self.status_label.setText("应用失败，原设置已尝试恢复")
-            self.apply_button.setEnabled(True)
+            self._sync_apply_button()
             return
+
+        try:
+            self.cursor_service.set_cursor_size(self._preview_size())
+        except (CursorServiceError, ValueError):
+            pass
 
         self._refresh_current_theme()
         if self.physics_service.is_running:
@@ -439,7 +736,7 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(
                     f"已应用：{friendly_theme_name(theme.name)}（物理摇摆已关闭）"
                 )
-                self.apply_button.setEnabled(True)
+                self._sync_apply_button()
                 return
 
         if theme.is_animated:
@@ -449,13 +746,13 @@ class MainWindow(QMainWindow):
             )
         else:
             self.status_label.setText(f"已应用：{friendly_theme_name(theme.name)}")
-        self.apply_button.setEnabled(True)
+        self._sync_apply_button()
 
     def _apply_cursor_size(self) -> None:
         size = CURSOR_SIZE_MIN + (
             self.size_slider.value() - 1
         ) * CURSOR_SIZE_STEP
-        self.apply_size_button.setEnabled(False)
+        self.size_slider.setEnabled(False)
         try:
             self.cursor_service.set_cursor_size(size)
             selected_theme = self.cursor_service.load_selected_theme()
@@ -482,8 +779,9 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(
                     f"指针大小已调整为 {size} px，已应用 {asset_size} px ANI"
                 )
+            self._refresh_selected_preview()
         finally:
-            self.apply_size_button.setEnabled(True)
+            self.size_slider.setEnabled(True)
 
     def _restore_backup(self) -> None:
         answer = QMessageBox.question(
@@ -599,13 +897,9 @@ class MainWindow(QMainWindow):
             self.import_button.setEnabled(True)
 
     def _theme_item_for_index(self, theme_index: int) -> QTreeWidgetItem | None:
-        root = self.theme_list.invisibleRootItem()
-        for category_index in range(root.childCount()):
-            category = root.child(category_index)
-            for item_index in range(category.childCount()):
-                item = category.child(item_index)
-                if item.data(0, Qt.UserRole) == theme_index:
-                    return item
+        for item in self._iter_theme_items():
+            if item.data(0, Qt.UserRole) == theme_index:
+                return item
         return None
 
     def _restore_physics_preference(self) -> None:
@@ -677,22 +971,6 @@ class MainWindow(QMainWindow):
             return self.themes[theme_index]
         return None
 
-    def _attach_physics_checkbox(self, category_item: QTreeWidgetItem) -> None:
-        item = QTreeWidgetItem()
-        item.setFlags(Qt.ItemIsEnabled)
-        category_item.insertChild(0, item)
-        item.setSizeHint(0, self.physics_checkbox.sizeHint())
-        self.theme_list.setItemWidget(item, 0, self.physics_checkbox)
-        self._physics_tree_item = item
-        self.physics_checkbox.show()
-
-    def _detach_physics_checkbox(self) -> None:
-        if self._physics_tree_item is not None:
-            self.theme_list.removeItemWidget(self._physics_tree_item, 0)
-            self._physics_tree_item = None
-        self.physics_checkbox.setParent(self)
-        self.physics_checkbox.hide()
-
     def _update_physics_controls(self, theme: CursorTheme | None) -> None:
         supported = theme is not None and theme_supports_physics(theme)
         if theme is not None and theme.is_animated and self.physics_service.is_running:
@@ -710,7 +988,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self.physics_checkbox.setToolTip(
-                "物理摇摆仅适用于「QMcursor 自制指针」。"
+                "物理摇摆仅适用于「QM旧版指针」。"
                 "请先选择该分类下的主题后再启用。"
             )
 
@@ -774,8 +1052,9 @@ class MainWindow(QMainWindow):
 
     def _unload_heavy_ui(self) -> None:
         """Drop theme list / previews so tray-resident mode holds less RAM."""
-        self.details.setRowCount(0)
-        self._detach_physics_checkbox()
+        self._preview_refresh_timer.stop()
+        self.preview_panel.show_empty("从托盘重新打开后即可继续预览。")
+        self._update_preview_chrome(None)
         self.theme_list.clear()
         self.themes.clear()
         app = QApplication.instance()

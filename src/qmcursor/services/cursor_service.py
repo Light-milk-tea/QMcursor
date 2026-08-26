@@ -15,7 +15,12 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Iterable
 
-from qmcursor.models.theme import CURSOR_ROLES, CursorTheme
+from qmcursor.models.theme import (
+    CURSOR_ROLES,
+    CursorTheme,
+    is_classic_system_scheme,
+    is_hidden_scheme,
+)
 
 ACTIVE_CURSORS_KEY = r"Control Panel\Cursors"
 USER_SCHEMES_KEY = rf"{ACTIVE_CURSORS_KEY}\Schemes"
@@ -122,6 +127,11 @@ class CursorService:
 
         for hive, key_path, source in locations:
             for name, value in self._enum_string_values(hive, key_path):
+                # HKLM has every size variant; the client only keeps Windows Aero.
+                if source == 2 and not is_classic_system_scheme(name):
+                    continue
+                if is_hidden_scheme(name):
+                    continue
                 try:
                     theme = CursorTheme.from_scheme_value(
                         name,

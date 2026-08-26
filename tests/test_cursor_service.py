@@ -193,8 +193,8 @@ def test_set_cursor_size_rejects_unsupported_step(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "theme_name",
     (
-        "粉白 Fluent 精致版",
-        "纸鹤圆润超粗体",
+        "伊雷娜",
+        "塔菲新版",
     ),
 )
 def test_bundled_cursor_themes_are_available(theme_name: str) -> None:
