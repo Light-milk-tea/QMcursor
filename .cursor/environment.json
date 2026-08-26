@@ -1,0 +1,4 @@
+{
+  "name": "QMcursor",
+  "install": "bash .cursor/install.sh"
+}
