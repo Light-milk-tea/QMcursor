@@ -1,6 +1,6 @@
 ---
 name: generate-ani-cursor-theme
-description: 按 Mon3tr 与魔理沙光标的形态分布、硬边像素和动画节奏，先生成高清指针再按用户选择的 32/48/64 画布档分区绘制像素首帧，制作 17 角色、8 位、8 帧 Windows 原生 ANI 光标包。禁止把最近邻量化 PNG 当正式帧。用户提到生成动态光标、ANI 指针、Mon3tr 风格、魔理沙光标风格或角色像素光标时使用。
+description: 按 Seedance 流程为 QMcursor 制作角色动态光标：先确认高清 concept 静帧，再用 Seedance 图生视频生成分层闲置，抽 16 帧做成 128×128、32 位 ANI。禁止 Prompt B 拆层派生、禁止真像素量化稿当正式帧。用户提到生成动态光标、ANI 指针、Seedance 动画或角色像素光标时使用。
 ---
 
 # 生成 Mon3tr / 魔理沙式 ANI 光标
@@ -11,12 +11,12 @@ description: 按 Mon3tr 与魔理沙光标的形态分布、硬边像素和动�
 
 开始前完整读取：
 
-1. `doc/Mon3tr魔理沙风格ANI光标生成提示词.md`
+1. `doc/Seedance动画指针制作流程.md`
 2. `doc/ANI动态鼠标指针制作标准流程.md`
 
-若两者有差异，以第一份文件为准：先高清确认，再询问画布档，再按 A2-0 至 A2-5 分区绘制像素首帧；正式帧为用户选择的 `N×N`（32 / 48 / 64），8 位，每角色 8 帧。禁止把最近邻量化 PNG 当正式帧。
+若两者有差异，以第一份为准：先确认高清 concept 静帧，再 Seedance 图生视频，再抽 16 帧做成 128×128、32 位 ANI。禁止 Prompt B、禁止 `build_assets.py` 猜层派生续帧，禁止把最近邻量化 PNG 当正式帧。
 
-不得寻找、恢复或使用已经删除的旧静态 CUR 提示词与旧 Skill。
+`doc/Mon3tr魔理沙风格ANI光标生成提示词.md` 只作构图参考，不要执行其中的 A2 / Prompt B。
 
 ## 输入
 
@@ -27,12 +27,13 @@ description: 按 Mon3tr 与魔理沙光标的形态分布、硬边像素和动�
 
 ## 固定输出
 
-- 17 个角色。
-- 每角色 8 张 `N×N` RGBA PNG；`N` 由用户在高清首帧通过后选择。
-- Alpha 仅 0/255，1px 硬描边，固定调色板。
-- 17 个 `N×N`、8 位 ANI。
-- `JifRate=6`，约 100ms/帧。
-- `style-summary.md`、`hotspots.json`、`build_assets.py`、`concept/`、`source/`、`preview/`、`package/`。
+- 先做通 `Normal`；完整主题再补其余角色。
+- 动态角色：每角色 16 张 `128×128` RGBA PNG。
+- Alpha 仅 0/255；高清缩小用 LANCZOS。
+- 动态 ANI：128×128、32 位、16 帧、`JifRate=6`。
+- 功能态可用静帧。
+- `style-summary.md`、`hotspots.json`、`concept/`、`source/`、`preview/`、`package/`。
+- 不要为新主题写上千行 `build_assets.py` 派生续帧。
 
 ## 动画预览反馈（强制）
 
@@ -44,6 +45,8 @@ description: 按 Mon3tr 与魔理沙光标的形态分布、硬边像素和动�
 - GIF 必须使用本轮正式帧、固定调色板、最近邻放大和约 100ms/帧，避免预览自身产生闪色或模糊。
 
 ## 工作流
+
+按 `doc/Seedance动画指针制作流程.md` 的 S0–S5 执行。不要执行旧 A2 / Prompt B。
 
 ### 1. 分析角色与基准
 
@@ -61,108 +64,63 @@ description: 按 Mon3tr 与魔理沙光标的形态分布、硬边像素和动�
    - 可动部件和动作节奏。
    - 画布档先标为「待用户选择」。
 
-### 2. 只生成普通选择关键帧
+### 2. 只确认普通选择静帧
 
-必须按 A1 → 选档 → A2。禁止一上来按逻辑像素格生图像素风指针。
+1. GenerateImage 出高清 Q 版指针 concept，保存 `concept/01-normal-select-concept.png`。
+2. 用户未确认静帧前，禁止 Seedance，禁止抽帧，禁止制作其余角色。
 
-1. 使用规范中的“Prompt A1：生成高清指针首帧”。
-2. 必须调用图像生成工具，`reference_image_paths` 包含：
-   - 全部角色参考图。
-   - Mon3tr / 魔理沙关键帧参考（只学构图，不学像素格）。
-3. 生图描述必须包含：
-   - 高清 Q 版指针插画，尽量像参考角色。
-   - 干净色块和清晰轮廓，方便下一步分区绘制。
-   - 角色与功能尖端一体化。
-   - 禁止独立默认箭头加缩小立绘。
-   - 禁止在这一步要求 32 / 48 / 64 逻辑像素格、马赛克或最近邻像素风。
-   - 纯色临时背景，主体不使用背景色。
-4. 保存高清图到 `concept/01-normal-select-hd.png`，展示高清图和缩小预览。
-5. 用户未确认高清构图前，禁止询问画布档，禁止像素化，禁止制作其余角色。
-6. 高清通过后，必须询问用户选择画布档，不得自行默认：
-   - 粗：32×32，接近 Mon3tr
-   - 中：48×48，接近魔理沙 / 桃金娘
-   - 细：64×64，颗粒最细
-7. 将档名和 `N×N` 写入 `style-summary.md`。整套 17 角色共用这一 `N`。
-8. 使用规范中的 Prompt A2，按 A2-0 至 A2-5 把已确认高清图做成 `N×N` 像素首帧：瘦身 → 剪影 → 对照 → 分区 → 修边 → 门槛。禁止再调用生图模型重画一张像素风图。禁止把 `image_to_pixel_art_wasm` 或任何最近邻量化 PNG 复制为 `source/*/00.png`；对照稿只能放在 `concept/pixel-ref/`。
-9. 检查：
-   - 功能尖端清楚且可作为热点。
-   - 脸是连续肤色块；眼白或瞳孔可数，两眼对称，中缝 ≥2px。
-   - 发 / 肤之间有 1px 隔离；发色不贴眼白。
-   - 角色和道具不粘成无法辨认的色团。
-   - 原生 `N`px 下可读。
-10. 生成原尺寸和最近邻放大预览，展示给用户确认。不要把 WASM 对照稿和正式帧混在一起展示。
-11. 未确认像素首帧前禁止制作其余角色。
+### 3. 制作 Normal 十六帧
 
-### 3. 制作 Normal 八帧
+1. 把已确认静帧交给用户用 Seedance 图生视频；提示词用文档第 3 节模板（分层闲置，禁止钟摆）。
+2. 从采用的视频均匀抽 16 帧。
+3. 边缘洪水抠棋盘；按左上锚点对齐，不要用软塌帽尖。
+4. LANCZOS 整只角色装进 128×128；硬 Alpha；热点 16 帧相同。
+5. 绿底 GIF 约 100ms/帧展示给用户。确认前禁止打 ANI、禁止替换系统指针。
 
-1. 使用规范中的“Prompt B：基于首帧制作后续动画”。
-2. 将关键帧拆成固定热点、固定人物、可动部件、背景补底和前景遮挡层。
-3. 先输出分层预览；全部蒙版叠回后必须与首帧逐像素一致。
-4. 用逐像素编辑或主题专用 `build_assets.py` 派生 8 帧，禁止按颜色猜层，禁止分别调用生图工具重画续帧，禁止用高清图逐帧重生后再像素化。
-5. 热点尖端保持绝对静止；可动部件的填充、暗部和材质描边必须一起移动，原位置不得留下旧轮廓。
-6. 输出 GIF、帧表和差异图，检查透明洞、白点、残影、热点和首尾循环。
-7. 用户确认动画预览前禁止构建 ANI、同步 QMcursor 或替换系统指针。
+### 4. 制作其余角色
 
-### 4. 制作其余十六个角色
-
-按新 Prompt 的角色表执行。每个角色仍先走 A1 高清确认，再按已选定的同一 `N` 做 A2-0 至 A2-5，再进入续帧。不得跳过剪影/分区，直接量化交差。
-
-角色态应有有效动画：
-
-- Help
-- Working
-- Unavailable
-- Link
-- Pin
-- Person
-
-功能态：
-
-- Busy 使用主题核心做 8 帧循环。
-- Precision 只做轻微中心脉冲。
-- Text、Handwriting、四种 Resize、Move、Alternate 可将静态帧复用 8 次。
-
-每个角色完成后先检查方向、热点、色板和原生 `N`px 可读性，再继续下一个。
+先做通 Normal。再按文档第 8 节：`Working` / `Busy` 可另出视频；`Help` / `Link` 等能复用就加静帧附件；功能态静帧即可。
 
 ### 5. 写热点配置
 
-在工作目录写 `hotspots.json`。下列坐标是 48×48 中档示例；粗档约 ×2/3，细档约 ×4/3，中心类可用 `N/2`。坐标必须按实际可见尖端修正。
+在工作目录写 `hotspots.json`。下列坐标是 **128×128** 量级示例；必须按实际可见左上尖端修正。
 
 ```json
 {
-  "01-normal-select": [2, 5],
-  "02-help-select": [2, 5],
-  "03-working-in-background": [2, 5],
-  "04-busy": [24, 24],
-  "05-precision-select": [24, 24],
-  "06-text-select": [23, 24],
-  "07-handwriting": [7, 41],
-  "08-unavailable": [5, 5],
-  "09-vertical-resize": [24, 24],
-  "10-horizontal-resize": [24, 24],
-  "11-diagonal-resize-nwse": [24, 24],
-  "12-diagonal-resize-nesw": [24, 24],
-  "13-move": [24, 24],
-  "14-alternate-select": [24, 5],
-  "15-link-select": [4, 7],
-  "16-location-select": [4, 7],
-  "17-person-select": [4, 7]
+  "01-normal-select": [7, 22],
+  "02-help-select": [7, 22],
+  "03-working-in-background": [7, 22],
+  "04-busy": [64, 64],
+  "05-precision-select": [64, 64],
+  "06-text-select": [64, 64],
+  "07-handwriting": [18, 110],
+  "08-unavailable": [12, 12],
+  "09-vertical-resize": [64, 64],
+  "10-horizontal-resize": [64, 64],
+  "11-diagonal-resize-nwse": [64, 64],
+  "12-diagonal-resize-nesw": [64, 64],
+  "13-move": [64, 64],
+  "14-alternate-select": [64, 12],
+  "15-link-select": [10, 18],
+  "16-location-select": [10, 18],
+  "17-person-select": [10, 18]
 }
 ```
 
 ### 6. 构建 ANI
 
-从项目根目录执行，`--size` 必须等于用户确认的 `N`：
+从项目根目录执行：
 
 ```powershell
 python .cursor/skills/generate-qmcursor-theme/scripts/build_ani_theme.py `
   --input "<工作目录>/source" `
   --output "<工作目录>/package" `
-  --size N `
+  --size 128 `
   --jif-rate 6 `
-  --indexed-8bit `
   --hotspots "<工作目录>/hotspots.json"
 ```
+
+正式帧已是 128 透明 PNG 时不要加 `--indexed-8bit`。
 
 在 `package/theme.inf` 写入：
 
@@ -175,25 +133,19 @@ SCHEME_NAME="<中文主题名>"
 
 必须验证：
 
-- 17 个目录 × 8 帧，共 136 张 PNG。
-- 全部为用户确认的 `N×N`、硬 Alpha、无色键污染、可见色不超过 255。
-- 脸与双眼完整对称；眼白或瞳孔可数、发肤之间有 1px 隔离。
-- 角色态至少 4 个不同有效帧。
-- 同一角色热点全帧一致。
-- 17 个 ANI 均为 RIFF `ACON`、8 位、8 帧、`JifRate=6`、尺寸 `N×N`。
-- `LoadCursorFromFileW` 可加载全部 ANI。
-- QMcursor 隔离导入传统 15 角色成功；Pin / Person 保留在包中。
+- 动态角色：每角色 16 张 128×128 PNG，硬 Alpha，棋盘已抠。
+- 整只角色在画布内；热点全帧一致，锚在左上尖端。
+- 动态 ANI：RIFF `ACON`、32 位、16 帧、`JifRate=6`、128×128。
+- `LoadCursorFromFileW` 可加载。
+- 试做可只应用普通选择；完整包再补其余角色。
 - `python -m pytest`
 - `python -m compileall -q src tests`
-- 检查新改文件的 IDE Lint。
 
 ## 完成报告
 
 报告：
 
-- 主题名、工作目录与画布档（`N×N`）。
-- 普通选择高清图与像素预览。
-- 17 角色、136 帧、17 ANI 是否完整。
-- 位深、帧率、热点、Alpha 与 Windows 加载结果。
-- QMcursor 导入和测试结果。
-- 默认不主动替换用户当前系统指针；用户明确要求后再应用。
+- 主题名、工作目录、128×128 / 16 帧 / 32 位。
+- 普通选择 concept 与绿底 GIF。
+- ANI 热点、Windows 加载与导入结果。
+- 默认不主动替换系统指针；用户明确要求后再应用。
